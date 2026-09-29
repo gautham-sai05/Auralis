@@ -1,7 +1,51 @@
 import type { BrowserWindow } from 'electron';
 import electron from 'electron';
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import https from 'node:https';
 
-const { ipcMain, Notification } = electron;
+const { app, ipcMain, Notification } = electron;
+
+// Downloads and caches track artwork so it can be used as a notification
+// icon. Electron's Notification only accepts a local file path or
+// NativeImage for its icon, not a remote URL, so the artwork has to be
+// fetched to disk first. Failures here must never break notifications —
+// they just show without artwork.
+const artworkCacheDir = path.join(app.getPath('userData'), 'artwork-cache');
+
+function fetchArtwork(url: string): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    try {
+      fs.mkdirSync(artworkCacheDir, { recursive: true });
+      const ext = url.includes('.png') ? 'png' : 'jpg';
+      const cachePath = path.join(artworkCacheDir, `${createHash('sha1').update(url).digest('hex')}.${ext}`);
+      if (fs.existsSync(cachePath)) {
+        resolve(cachePath);
+        return;
+      }
+      const file = fs.createWriteStream(cachePath);
+      https
+        .get(url, (res) => {
+          if (res.statusCode !== 200) {
+            file.close();
+            fs.unlink(cachePath, () => undefined);
+            resolve(undefined);
+            return;
+          }
+          res.pipe(file);
+          file.on('finish', () => file.close(() => resolve(cachePath)));
+        })
+        .on('error', () => {
+          file.close();
+          fs.unlink(cachePath, () => undefined);
+          resolve(undefined);
+        });
+    } catch {
+      resolve(undefined);
+    }
+  });
+}
 
 interface MediaSessionSnapshot {
   title: string | null;
@@ -33,11 +77,19 @@ export async function setupMpris(win: BrowserWindow): Promise<void> {
     if (snapshot.title && snapshot.title !== lastNotifiedTitle) {
       lastNotifiedTitle = snapshot.title;
       if (Notification.isSupported()) {
-        new Notification({
-          title: snapshot.title,
-          body: [snapshot.artist, snapshot.album].filter(Boolean).join(' — '),
-          silent: true,
-        }).show();
+        const show = (icon?: string): void => {
+          new Notification({
+            title: snapshot.title ?? '',
+            body: [snapshot.artist, snapshot.album].filter(Boolean).join(' — '),
+            icon,
+            silent: true,
+          }).show();
+        };
+        if (snapshot.artwork) {
+          void fetchArtwork(snapshot.artwork).then(show);
+        } else {
+          show();
+        }
       }
     }
   };

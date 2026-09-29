@@ -6,7 +6,20 @@ import { setupMpris } from './mpris.js';
 import { isAllowedUrl } from './url-guard.js';
 import { loadWindowState, trackWindowState } from './window-state.js';
 
-const { app, BrowserWindow, Menu, Tray, nativeImage, shell, ipcMain, session } = electron;
+const { app, BrowserWindow, Menu, Tray, nativeImage, shell, ipcMain, session, Notification } = electron;
+
+// Works around a real, repeatedly-observed crash on this Wayland/Mesa setup:
+// the GPU process segfaults 2-3 times on every cold start trying to allocate
+// a hardware scanout buffer ("Cannot create bo with format=RGBA_8888 and
+// usage=SCANOUT"), each time triggering a ~1.5s automatic Chromium restart of
+// that process before it eventually gives up and falls back on its own.
+// `disable-gpu-sandbox` alone did NOT fix this (tested: identical 3-crash
+// pattern with it set). Fully disabling GPU hardware acceleration does,
+// verified by rerunning the same launch after adding this line and seeing
+// zero gpu_process_host crash-loop lines. The app is a media player, not a
+// GPU-bound UI, so trading hardware compositing for a guaranteed-stable
+// startup is the right tradeoff here.
+app.disableHardwareAcceleration();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
@@ -16,6 +29,7 @@ const APPLE_MUSIC_URL = 'https://music.apple.com/';
 let mainWindow: BrowserWindowType | null = null;
 let tray: TrayType | null = null;
 let isQuitting = false;
+let hasShownTrayHint = false;
 
 function createWindow(): BrowserWindowType {
   const state = loadWindowState(app.getPath('userData'));
@@ -31,6 +45,12 @@ function createWindow(): BrowserWindowType {
     icon: path.join(__dirname, '..', 'build', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
+      // Named persistent partition (rather than relying on the implicit
+      // default session) so sign-in survives restarts reliably. Cider users
+      // have long reported "resume last session" silently failing on Linux;
+      // an explicit, named partition removes any ambiguity about which
+      // session store is actually being read from and written to.
+      partition: 'persist:auralis',
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
@@ -57,7 +77,7 @@ function createWindow(): BrowserWindowType {
   // Deny every permission request (camera, mic, notifications-from-page,
   // etc.) by default; Apple's web player does not need any of these to play
   // audio, and the app's own native notifications are driven separately.
-  session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+  session.fromPartition('persist:auralis').setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
 
   // Block navigation to anything outside Apple's authentication/playback domains.
   win.webContents.on('will-navigate', (event, url) => {
@@ -74,10 +94,26 @@ function createWindow(): BrowserWindowType {
     return { action: 'deny' };
   });
 
+  // Close-to-tray: hide instead of quitting. This is a deliberately simple,
+  // hard-to-break implementation — Cider's Linux users have long reported
+  // "Close to Tray" instead closing the app outright, which tends to happen
+  // when the behavior is gated behind a settings flag that can end up unset
+  // or misread. Here it's unconditional and the only way to actually quit is
+  // the tray's Quit item, so there's no state to get out of sync.
   win.on('close', (event) => {
     if (!isQuitting) {
       event.preventDefault();
       win.hide();
+      if (!hasShownTrayHint) {
+        hasShownTrayHint = true;
+        if (Notification.isSupported()) {
+          new Notification({
+            title: 'Auralis is still running',
+            body: 'Closing the window keeps Auralis in the tray. Quit from the tray menu to exit fully.',
+            silent: true,
+          }).show();
+        }
+      }
     }
   });
 

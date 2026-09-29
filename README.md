@@ -22,12 +22,14 @@ This section separates what's been built and tested from what's just configured.
 **Confirmed working, tested in this environment:**
 
 - The real Apple Music web player loads and signs in through Apple's own flow — launched and watched load without crashing, with real console output from Apple's own page confirming it.
-- Session persistence across restarts, via Electron's normal persistent cookie storage.
+- Session persistence across restarts, through a named persistent partition (`persist:auralis`) rather than the implicit default session, specifically so there's no ambiguity about which store sign-in state is read from.
 - Context isolation, a sandboxed renderer, and no Node integration exposed to remote content.
 - A navigation allowlist that only lets Apple's own auth/playback domains load inside the app — everything else opens in your system browser. Covered by unit tests (`electron/url-guard.test.ts`).
-- The system tray (show/quit) and desktop notifications on track change.
-- A branded splash screen that shows instantly on launch and hands off to the real player once it's ready.
+- The system tray, and closing the window hides it there rather than quitting — deliberately unconditional, with the only way to actually exit being the tray's Quit item. (Cider, the main existing Apple Music Linux client, has long-standing reports of "Close to Tray" instead closing the app outright; this sidesteps that class of bug by not having a settings flag to get out of sync in the first place.) A one-time notification tells you where the app went the first time you close it.
+- Desktop notifications on track change, including the actual album artwork — downloaded once and cached, since Electron's notification icon needs a local file rather than a remote URL.
+- A branded splash screen — an animated soundwave mark matching the app icon — that shows instantly on launch and hands off to the real player once it's ready.
 - Window size and position getting remembered between launches.
+- A GPU crash loop on this Wayland/Mesa setup, caught by actually watching the logs: the GPU process was segfaulting 2-3 times on every single cold start trying to allocate a hardware scanout buffer, each time forcing a ~1.5s automatic restart before eventually recovering. `app.disableHardwareAcceleration()` eliminates it — verified by rerunning the identical launch and counting zero crash-loop lines where there were three before. (A first attempt at fixing this, `disable-gpu-sandbox`, was tested and did *not* work — left out rather than left in as a claim.)
 - MPRIS: the app registers a real D-Bus service (`org.mpris.MediaPlayer2.auralis`), and this was checked directly with `dbus-send` — a live `Identity` query returned `"Auralis"` from a running instance. Play/pause/next/previous work by clicking the web player's own on-page buttons (there's no MusicKit access to call instead), which is inherently best-effort: if Apple changes its page markup, track skip could quietly stop working. It hasn't been checked against a real GNOME Shell or KDE media widget, only against raw D-Bus calls.
 - The AppImage was actually built and run, not just configured — it launches, shows the splash, and loads the real Apple Music page cleanly.
 - The Arch package: a `.pkg.tar.zst` built from the `PKGBUILD`'s packaging logic was checked and is structurally correct, and the exact binary it installs was launched directly and ran with zero errors. What wasn't done is the final `sudo pacman -U` — this development session had no interactive sudo access to run it.
@@ -36,6 +38,10 @@ This section separates what's been built and tested from what's just configured.
 
 - Hi-Res / Lossless audio. Apple only serves Lossless and Hi-Res Lossless streams through its native, FairPlay-gated clients (macOS Music, iOS/iPadOS, the Windows app). The web player streams standard AAC no matter your subscription tier or device, on every platform, not just Linux. There's no legitimate way around this without a native Apple client and circumventing DRM, which won't happen here.
 - A custom library/browse UI, for the MusicKit reason explained above.
+
+**Looked at, deliberately left out:**
+
+- Discord Rich Presence — a feature the main existing Apple Music Linux clients (Cider, Sidra) all offer, showing what's playing as your Discord status. It's technically straightforward to add on top of the same media-session data already captured for MPRIS, but registering a Discord Rich Presence integration requires creating a Discord application to get a client ID, which is an account-holder action, not something that can be done on your behalf. If you create one (a couple of minutes at [discord.com/developers](https://discord.com/developers/applications)), open an issue with the client ID and this gets wired in.
 
 **Unverified, not because it's expected to fail, but because it wasn't checked here:**
 
