@@ -6,8 +6,8 @@ pkgdesc="Unofficial Apple Music client for Linux (Electron shell around music.ap
 arch=('x86_64')
 url="https://github.com/gautham-sai05/Auralis"
 license=('MIT')
-depends=('gtk3' 'nss' 'libxss' 'alsa-lib' 'libnotify')
-makedepends=('nodejs' 'npm' 'git')
+depends=('gtk3' 'nss' 'libxss' 'alsa-lib' 'libnotify' 'at-spi2-core')
+makedepends=('nodejs' 'npm')
 options=('!strip')
 source=("git+https://github.com/gautham-sai05/Auralis.git#tag=v${pkgver}")
 sha256sums=('SKIP')
@@ -16,17 +16,24 @@ build() {
   cd "$srcdir/Auralis"
   npm ci
   npm run build
-  npx electron-builder --linux pacman --x64 --config.directories.output="$srcdir/release"
+  npx electron-builder --linux dir --x64
 }
 
 package() {
-  local relbase="$srcdir/release"
-  local pkgdir_extract
-  pkgdir_extract=$(find "$relbase" -maxdepth 1 -iname "*.pacman" | head -n1)
-  if [ -z "$pkgdir_extract" ]; then
-    echo "error: built pacman package not found in $relbase" >&2
-    return 1
-  fi
-  bsdtar -xf "$pkgdir_extract" -C "$pkgdir"
-  rm -rf "$pkgdir/.PKGINFO" "$pkgdir/.MTREE" "$pkgdir/.BUILDINFO" "$pkgdir/.INSTALL" 2>/dev/null || true
+  cd "$srcdir/Auralis"
+
+  install -dm755 "$pkgdir/usr/lib/auralis"
+  cp -r release/linux-unpacked/. "$pkgdir/usr/lib/auralis/"
+  chmod 4755 "$pkgdir/usr/lib/auralis/chrome-sandbox"
+
+  install -dm755 "$pkgdir/usr/bin"
+  cat > "$pkgdir/usr/bin/auralis" <<'EOF'
+#!/bin/sh
+exec /usr/lib/auralis/auralis "$@"
+EOF
+  chmod 755 "$pkgdir/usr/bin/auralis"
+
+  install -Dm644 build/auralis.desktop "$pkgdir/usr/share/applications/auralis.desktop"
+  install -Dm644 build/icon.png "$pkgdir/usr/share/icons/hicolor/512x512/apps/auralis.png"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

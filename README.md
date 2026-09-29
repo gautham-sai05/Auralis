@@ -2,74 +2,83 @@
 
 An unofficial Apple Music desktop client for Linux, by [Gautham Sai](https://github.com/gautham-sai05).
 
-Auralis wraps Apple's own official web player (`music.apple.com`) in a hardened, native-feeling Electron shell with Linux desktop integration — tray icon, desktop notifications, and MPRIS (media keys, GNOME/KDE media widgets). It uses **your own Apple Music account and subscription**; Auralis has no server, no account system, and never sees or stores your Apple password.
+Auralis wraps Apple's own web player (`music.apple.com`) in a hardened, native-feeling Electron shell with proper Linux desktop integration: a tray icon, desktop notifications, and MPRIS support for media keys and media widgets. It signs in with your own Apple Music account and subscription — there's no server and no account system of its own, and it never sees or stores your Apple password.
 
-## Why it works this way (read this before filing "why no custom UI" issues)
+## Why it works this way
 
-Apple does not publish a way for third-party native apps to authenticate against an Apple ID and play DRM-protected Apple Music streams. The only two legitimate integration paths are:
+Before you file an issue asking why there's no custom Music-app-style UI: Apple doesn't publish a way for third-party native apps to authenticate against an Apple ID and play DRM-protected Apple Music streams. There are really only two legitimate paths in:
 
-1. **The official web player** (`music.apple.com`) — full Apple Music UI, sign-in, browsing, and playback, running in a real browser engine. This is what Auralis embeds.
-2. **MusicKit JS** — Apple's official JavaScript SDK that lets a web app build its *own* UI and drive playback, but it requires an **Apple Developer Program membership and a MusicKit developer token** to obtain. Auralis does not currently have one.
+1. **The official web player** at `music.apple.com` — full sign-in, browsing, and playback, running in a real browser engine. This is what Auralis embeds.
+2. **MusicKit JS**, Apple's own JavaScript SDK, which lets a web app build its own UI and drive playback directly. But it requires an Apple Developer Program membership and a MusicKit developer token, and Auralis doesn't have one yet.
 
-Because of (2), Auralis cannot yet ship a fully custom, from-scratch Music-app-style UI with real working playback controls — doing so without MusicKit would mean shipping buttons that don't actually do anything, which this project explicitly refuses to do. If you're the maintainer and obtain a MusicKit developer token, swapping the shell for a native MusicKit-driven UI (iOS/macOS-style library, browse, and now-playing screens) becomes possible and is the natural next milestone — track it as an issue.
+Because of that second point, this version can't ship a fully custom UI with real working playback controls. Building one without MusicKit would mean shipping buttons that don't actually do anything, and that's not something this project is willing to do. If a MusicKit developer token becomes available down the line, swapping in a proper native UI — an iOS/macOS-style library, browse, and now-playing screen — becomes possible, and would be the obvious next step.
 
-**Nothing here bypasses FairPlay DRM, reverse-engineers private Apple APIs, or extracts protected streams.** Playback happens entirely inside Apple's own player code.
+To be clear: nothing here bypasses FairPlay DRM, reverse-engineers private Apple APIs, or extracts protected streams. Playback happens entirely inside Apple's own player code.
 
-## What's implemented and verified
+## What's actually working
 
-| Feature | Status |
-|---|---|
-| Loads the real Apple Music web player, sign-in through Apple's own flow | ✅ Built, launched and verified locally (loads, no crash, real console output from Apple's page) |
-| Session persistence (stays signed in across restarts) | ✅ Via Electron's persistent session partition — standard Chromium cookie storage |
-| Context isolation, sandboxed renderer, no Node integration in remote content | ✅ Implemented, see `electron/main.ts` |
-| Navigation allowlist (only Apple auth/playback domains load in-app; everything else opens in your system browser) | ✅ Implemented and unit-tested (`electron/url-guard.test.ts`) |
-| System tray (show/quit) | ✅ Built, launched locally |
-| Desktop notifications on track change | ✅ Implemented via the page's Media Session API → IPC → `Notification` |
-| MPRIS (media keys, GNOME Shell / KDE media widgets, `playerctl`) | ⚠️ Implemented against `dbus-next`; play/pause/next/previous relay by invoking the web player's own on-page buttons (no MusicKit access). This is **best-effort**: Apple can change its page markup at any time and silently break track skip/previous. Verified: the D-Bus service registers and the app does not crash if no session bus is present. Not verified against real GNOME/KDE media widgets on this machine. |
-| Hi-Res / Lossless audio | ❌ **Not possible via the web player.** See below. |
-| Custom Apple-Music-style library/browse UI | ❌ Not implemented — requires a MusicKit developer token (see above) |
+This section separates what's been built and tested from what's just configured. If something doesn't say it was tested, assume it wasn't.
 
-## Hi-Res / Lossless audio — why it's not offered
+**Confirmed working, tested in this environment:**
 
-Apple only serves Lossless and Hi-Res Lossless ALAC streams through its native, FairPlay-DRM-gated clients (macOS Music app, iOS/iPadOS, the Windows app). The web player at `music.apple.com` streams standard AAC regardless of your subscription tier or playback device — this is Apple's own platform limitation, not something Auralis can configure around, and there is no legitimate way to get hi-res into a Linux app without a native Apple client and circumventing DRM, which this project will not do. Auralis plays back at whatever quality the web player itself delivers.
+- The real Apple Music web player loads and signs in through Apple's own flow — launched and watched load without crashing, with real console output from Apple's own page confirming it.
+- Session persistence across restarts, via Electron's normal persistent cookie storage.
+- Context isolation, a sandboxed renderer, and no Node integration exposed to remote content.
+- A navigation allowlist that only lets Apple's own auth/playback domains load inside the app — everything else opens in your system browser. Covered by unit tests (`electron/url-guard.test.ts`).
+- The system tray (show/quit) and desktop notifications on track change.
+- A branded splash screen that shows instantly on launch and hands off to the real player once it's ready.
+- Window size and position getting remembered between launches.
+- MPRIS: the app registers a real D-Bus service (`org.mpris.MediaPlayer2.auralis`), and this was checked directly with `dbus-send` — a live `Identity` query returned `"Auralis"` from a running instance. Play/pause/next/previous work by clicking the web player's own on-page buttons (there's no MusicKit access to call instead), which is inherently best-effort: if Apple changes its page markup, track skip could quietly stop working. It hasn't been checked against a real GNOME Shell or KDE media widget, only against raw D-Bus calls.
+- The AppImage was actually built and run, not just configured — it launches, shows the splash, and loads the real Apple Music page cleanly.
+- The Arch package: a `.pkg.tar.zst` built from the `PKGBUILD`'s packaging logic was checked and is structurally correct, and the exact binary it installs was launched directly and ran with zero errors. What wasn't done is the final `sudo pacman -U` — this development session had no interactive sudo access to run it.
+
+**Not possible, and why:**
+
+- Hi-Res / Lossless audio. Apple only serves Lossless and Hi-Res Lossless streams through its native, FairPlay-gated clients (macOS Music, iOS/iPadOS, the Windows app). The web player streams standard AAC no matter your subscription tier or device, on every platform, not just Linux. There's no legitimate way around this without a native Apple client and circumventing DRM, which won't happen here.
+- A custom library/browse UI, for the MusicKit reason explained above.
+
+**Unverified, not because it's expected to fail, but because it wasn't checked here:**
+
+- The `.deb` package. Both it and the Arch `pacman` target build through `electron-builder`'s `fpm` dependency, and `fpm`'s binary download hung indefinitely in this sandboxed session. The Arch package worked around this by switching to the plain `dir` build target instead (see below); `.deb` still goes through `fpm` and CI will report its real status once it runs on GitHub Actions' less restricted network.
+- Fedora, openSUSE, GNOME, and KDE Plasma — nothing here runs any of those, so none of it has been tested there. The AppImage should work generically on any modern x86_64 distro, but "should" isn't "has been."
 
 ## Security
 
 - `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false` on the app's `BrowserWindow`.
 - A strict navigation allowlist (`electron/url-guard.ts`) restricts in-app navigation to `music.apple.com` and Apple's own sign-in domains; everything else opens in your default browser via `shell.openExternal`.
 - `setWindowOpenHandler` denies all `window.open` calls from web content and routes them to the system browser instead.
-- All permission requests from web content (camera, mic, geolocation, etc.) are denied by default.
-- The preload script exposes a minimal, read-only bridge (`window.auralis`) — it forwards only public, already-visible Media Session metadata (title/artist/album/playback position) for notifications and MPRIS. It never touches cookies, tokens, or credentials.
+- All permission requests from web content (camera, mic, geolocation, and so on) are denied by default.
+- The preload script exposes a minimal, read-only bridge (`window.auralis`) that forwards only public, already-visible Media Session metadata (title, artist, album, playback position) for notifications and MPRIS. It never touches cookies, tokens, or credentials.
 - No credentials, cookies, or session tokens are logged anywhere.
 
 ## Requirements
 
-- A Linux desktop (X11 or Wayland; GNOME, KDE, and window-manager-only setups like Hyprland/Sway are all supported — Auralis does not depend on GNOME-specific services).
-- PipeWire or PulseAudio for audio output (whichever your distro already uses; Auralis doesn't talk to either directly, Chromium's audio backend handles it).
+- A Linux desktop, X11 or Wayland. GNOME, KDE, and window-manager-only setups like Hyprland or Sway are all fine — nothing here depends on GNOME-specific services.
+- PipeWire or PulseAudio for audio output, whichever your distro already uses. Auralis doesn't talk to either directly; Chromium's audio backend handles that.
 - An active Apple Music subscription and Apple ID to sign in with.
-- Optional: a running session D-Bus for MPRIS/media-key support. If none is present, Auralis logs a warning and continues running normally — this has been verified not to crash the app.
+- Optionally, a running session D-Bus for MPRIS and media-key support. If there isn't one, Auralis logs a warning and keeps running normally — this was verified not to crash the app.
 
 ## Installing
 
 ### Arch Linux / EndeavourOS
 
-A `PKGBUILD` is provided in `build/arch/PKGBUILD`. It has been written and structured for `makepkg`, using `electron-builder`'s `pacman` target as the underlying package builder. **It has not yet been run end-to-end against a tagged GitHub release** (that requires a published `v0.1.0` tag, which doesn't exist yet at the time of this commit) — once a release is tagged, verify with:
+The `PKGBUILD` at `build/arch/PKGBUILD` builds the app with `electron-builder --linux dir` (a plain unpacked Electron app) rather than the `pacman` target, because that target pulls in `fpm`, which hung indefinitely trying to download its bundled binary in this environment. Packaging the plain `dir` output directly with `makepkg` is also just the more standard approach for Electron apps on the AUR.
+
+A package built from this exact `package()` logic was checked with `makepkg` and produces a structurally valid `.pkg.tar.zst` — correct `.PKGINFO`, correct layout under `/usr/lib/auralis`, `/usr/bin/auralis`, desktop entry, icon, license. The packaged binary itself (`release/linux-unpacked/auralis`, byte-for-byte what ends up at `/usr/lib/auralis/auralis`) was launched directly and ran with no errors. What's left is the actual `sudo pacman -U` step, which needs a real terminal with sudo access:
 
 ```bash
 cd build/arch
-makepkg -si
+makepkg -si   # once a v0.1.0 tag exists; builds, then installs with pacman
 ```
 
-If you want to build and test locally right now, from a clone of this repo:
+To build and test against your current checkout without a tagged release, build the app first, then run `makepkg` using a copy of the `PKGBUILD` whose `package()` step `cd`s into your local checkout instead of pulling a tagged source — this is exactly how the packaging was validated here:
 
 ```bash
-npm ci
-npm run build
-npx electron-builder --linux pacman --x64
-sudo pacman -U release/*.pacman
+npm ci && npm run build && npx electron-builder --linux dir --x64
+# then makepkg using the package() logic above against ./release/linux-unpacked
 ```
 
-### AppImage (any modern x86_64 distro)
+### AppImage (any modern x86_64 distro) — the one that's been fully run end to end
 
 ```bash
 npm ci
@@ -78,6 +87,14 @@ npm run package:appimage
 # → release/Auralis-0.1.0.AppImage
 chmod +x release/Auralis-0.1.0.AppImage
 ./release/Auralis-0.1.0.AppImage
+```
+
+This one was built and actually run, not just configured — it launches, shows the splash, and loads the real Apple Music page with no crash and no missing files.
+
+To put it in your app launcher (adds it to `~/.local/bin` plus a desktop entry, no root needed):
+
+```bash
+./scripts/install-appimage.sh release/Auralis-0.1.0.AppImage
 ```
 
 ### Debian / Ubuntu (.deb)
@@ -89,7 +106,7 @@ npm run package:deb
 sudo apt install ./release/auralis_0.1.0_amd64.deb
 ```
 
-**Note:** the `.deb` packaging config has been written and is exercised by CI (see `.github/workflows/ci.yml`, which builds it on `ubuntu-latest`), but has not been installed and launch-tested on a real Debian/Ubuntu machine in this session — this repo's dev environment is Arch-based (EndeavourOS). Please open an issue if it doesn't work.
+Like the Arch `pacman` target, this goes through `electron-builder`'s `fpm` dependency, and `fpm`'s download hung in this sandboxed session, so it wasn't possible to verify `.deb` end to end here. GitHub Actions runners tend to have far less restricted network access, so `.github/workflows/ci.yml` still builds it there, and its real pass/fail will show up on the Actions tab once this is pushed. Until you've checked that, treat `.deb` as unverified rather than working.
 
 ### From source (any distro with Node.js 20+)
 
@@ -103,7 +120,7 @@ npm start
 
 ## Running on Arch Linux with Hyprland
 
-Auralis makes no assumptions about your compositor. On Hyprland:
+Auralis doesn't assume anything about your compositor. On Hyprland:
 
 ```bash
 npm ci && npm run build && npm start
@@ -111,14 +128,14 @@ npm ci && npm run build && npm start
 ./release/Auralis-0.1.0.AppImage
 ```
 
-Tray icon support depends on Hyprland having a status bar with a systray module (e.g. `waybar` with the `tray` module) — without one, the tray icon simply won't be visible anywhere, but the app window itself is unaffected.
+The tray icon needs a status bar with a systray module to show up (`waybar`'s `tray` module, for example) — without one, the icon just won't be visible anywhere, but the app window itself is unaffected.
 
 ## Uninstalling
 
-- **Arch (pacman):** `sudo pacman -R auralis`
-- **Debian/Ubuntu (apt):** `sudo apt remove auralis`
-- **AppImage:** delete the `.AppImage` file — it's fully self-contained.
-- Config/session data lives under `~/.config/Auralis` (Electron's default `userData` path) and can be deleted separately if you want a clean sign-out.
+- Arch (pacman): `sudo pacman -R auralis`
+- Debian/Ubuntu (apt): `sudo apt remove auralis`
+- AppImage: delete the `.AppImage` file — it's fully self-contained.
+- Config and session data live under `~/.config/Auralis` (Electron's default `userData` path) and can be deleted separately for a clean sign-out.
 
 ## Development
 
@@ -130,25 +147,13 @@ npm test            # node:test unit tests (electron/*.test.ts)
 npm start           # build + launch
 ```
 
-## Compatibility matrix (what's actually been tested)
-
-| Environment | Status |
-|---|---|
-| EndeavourOS (Arch-based), Wayland session, X11 fallback available | ✅ App builds, launches, loads music.apple.com, exits cleanly — tested in this session |
-| Arch `pacman` packaging via `electron-builder` | ✅ Config present; not yet built into a `.pacman` file and installed in this session (see Installing) |
-| Debian/Ubuntu `.deb` | ⚠️ Config present, built by CI; not installed/launch-tested on real Debian/Ubuntu |
-| Fedora / openSUSE | ❌ Not tested. AppImage should work generically; no RPM packaging config included yet |
-| GNOME, KDE Plasma | ❌ Not tested in this session (dev environment has neither running) |
-| Hyprland / other wlroots compositors | ✅ Consistent with the environment this was built and launch-tested in |
-| MPRIS media-key integration against a real desktop widget | ❌ D-Bus service registration implemented; not verified against an actual GNOME/KDE media widget |
-
 ## Known limitations
 
-- No custom native library/browse UI — see explanation above.
-- No Hi-Res/Lossless audio — Apple platform limitation, not fixable client-side.
-- MPRIS next/previous controls rely on Apple's page DOM structure and may silently stop working if Apple changes it.
-- No offline downloads (not exposed by the web player).
-- No lyrics (not reliably exposed by the web player's DOM in a stable way this session had time to verify).
+- No custom native library/browse UI — see the explanation above.
+- No Hi-Res/Lossless audio — an Apple platform limitation, not something fixable client-side.
+- MPRIS next/previous controls rely on Apple's page markup and could silently stop working if Apple changes it.
+- No offline downloads — not exposed by the web player.
+- No lyrics — not reliably exposed by the web player's DOM in any way this session had time to verify.
 
 ## License
 

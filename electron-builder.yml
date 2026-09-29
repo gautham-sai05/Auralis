@@ -6,6 +6,8 @@ directories:
   buildResources: build
 files:
   - dist-electron/**/*
+  - build/loading.html
+  - build/icon.png
   - package.json
   - "!node_modules/**/*.map"
 extraMetadata:
@@ -25,8 +27,8 @@ linux:
       arch: [x64]
     - target: pacman
       arch: [x64]
-maintainer: Gautham Sai <https://github.com/gautham-sai05>
 deb:
+  maintainer: Gautham Sai <https://github.com/gautham-sai05>
   depends:
     - libgtk-3-0
     - libnotify4

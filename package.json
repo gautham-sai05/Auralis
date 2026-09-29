@@ -8,8 +8,8 @@
   "main": "dist-electron/main.js",
   "type": "module",
   "scripts": {
-    "build": "tsc -p electron/tsconfig.json",
-    "typecheck": "tsc -p electron/tsconfig.json --noEmit",
+    "build": "rm -rf dist-electron && tsc -p electron/tsconfig.json && tsc -p electron/tsconfig.preload.json && mv dist-electron/preload.js dist-electron/preload.cjs",
+    "typecheck": "tsc -p electron/tsconfig.json --noEmit && tsc -p electron/tsconfig.preload.json --noEmit",
     "lint": "eslint electron --ext .ts",
     "test": "node --test dist-electron-test/*.test.js",
     "pretest": "tsc -p electron/tsconfig.test.json",

@@ -46,17 +46,8 @@ export async function setupMpris(win: BrowserWindow): Promise<void> {
   // dbus-next is optional at runtime: environments without a session D-Bus
   // (minimal containers, some display managers) must still launch the app.
   const dbus = await import('dbus-next');
-  const { Interface, method, property } = dbus.interface;
+  const { Interface } = dbus.interface;
   const { Variant } = dbus;
-
-  // dbus-next's method() returns a standard TS MethodDecorator, which
-  // requires a PropertyDescriptor as its third argument; applied manually
-  // (outside a `@method(...)` class-decorator position) we fetch it ourselves.
-  function applyMethod(opts: Parameters<typeof method>[0], proto: object, key: string): void {
-    const descriptor = Object.getOwnPropertyDescriptor(proto, key);
-    if (!descriptor) throw new Error(`method ${key} not found on prototype`);
-    method(opts)(proto, key, descriptor);
-  }
 
   class Mpris2Root extends Interface {
     get Identity(): string {
@@ -88,15 +79,21 @@ export async function setupMpris(win: BrowserWindow): Promise<void> {
       // Intentionally a no-op: quitting is user-controlled via the tray menu.
     }
   }
-  property({ signature: 's' })(Mpris2Root.prototype, 'Identity');
-  property({ signature: 's' })(Mpris2Root.prototype, 'DesktopEntry');
-  property({ signature: 'b' })(Mpris2Root.prototype, 'CanQuit');
-  property({ signature: 'b' })(Mpris2Root.prototype, 'CanRaise');
-  property({ signature: 'b' })(Mpris2Root.prototype, 'HasTrackList');
-  property({ signature: 'as' })(Mpris2Root.prototype, 'SupportedUriSchemes');
-  property({ signature: 'as' })(Mpris2Root.prototype, 'SupportedMimeTypes');
-  applyMethod({ inSignature: '', outSignature: '' }, Mpris2Root.prototype, 'Raise');
-  applyMethod({ inSignature: '', outSignature: '' }, Mpris2Root.prototype, 'Quit');
+  Mpris2Root.configureMembers({
+    properties: {
+      Identity: { signature: 's', access: 'read' },
+      DesktopEntry: { signature: 's', access: 'read' },
+      CanQuit: { signature: 'b', access: 'read' },
+      CanRaise: { signature: 'b', access: 'read' },
+      HasTrackList: { signature: 'b', access: 'read' },
+      SupportedUriSchemes: { signature: 'as', access: 'read' },
+      SupportedMimeTypes: { signature: 'as', access: 'read' },
+    },
+    methods: {
+      Raise: { inSignature: '', outSignature: '' },
+      Quit: { inSignature: '', outSignature: '' },
+    },
+  });
 
   class Mpris2Player extends Interface {
     get PlaybackStatus(): string {
@@ -154,20 +151,26 @@ export async function setupMpris(win: BrowserWindow): Promise<void> {
       this.PlayPause();
     }
   }
-  property({ signature: 's' })(Mpris2Player.prototype, 'PlaybackStatus');
-  property({ signature: 'a{sv}' })(Mpris2Player.prototype, 'Metadata');
-  property({ signature: 'b' })(Mpris2Player.prototype, 'CanGoNext');
-  property({ signature: 'b' })(Mpris2Player.prototype, 'CanGoPrevious');
-  property({ signature: 'b' })(Mpris2Player.prototype, 'CanPlay');
-  property({ signature: 'b' })(Mpris2Player.prototype, 'CanPause');
-  property({ signature: 'b' })(Mpris2Player.prototype, 'CanSeek');
-  property({ signature: 'b' })(Mpris2Player.prototype, 'CanControl');
-  applyMethod({ inSignature: '', outSignature: '' }, Mpris2Player.prototype, 'PlayPause');
-  applyMethod({ inSignature: '', outSignature: '' }, Mpris2Player.prototype, 'Play');
-  applyMethod({ inSignature: '', outSignature: '' }, Mpris2Player.prototype, 'Pause');
-  applyMethod({ inSignature: '', outSignature: '' }, Mpris2Player.prototype, 'Next');
-  applyMethod({ inSignature: '', outSignature: '' }, Mpris2Player.prototype, 'Previous');
-  applyMethod({ inSignature: '', outSignature: '' }, Mpris2Player.prototype, 'Stop');
+  Mpris2Player.configureMembers({
+    properties: {
+      PlaybackStatus: { signature: 's', access: 'read' },
+      Metadata: { signature: 'a{sv}', access: 'read' },
+      CanGoNext: { signature: 'b', access: 'read' },
+      CanGoPrevious: { signature: 'b', access: 'read' },
+      CanPlay: { signature: 'b', access: 'read' },
+      CanPause: { signature: 'b', access: 'read' },
+      CanSeek: { signature: 'b', access: 'read' },
+      CanControl: { signature: 'b', access: 'read' },
+    },
+    methods: {
+      PlayPause: { inSignature: '', outSignature: '' },
+      Play: { inSignature: '', outSignature: '' },
+      Pause: { inSignature: '', outSignature: '' },
+      Next: { inSignature: '', outSignature: '' },
+      Previous: { inSignature: '', outSignature: '' },
+      Stop: { inSignature: '', outSignature: '' },
+    },
+  });
 
   const bus = dbus.sessionBus();
   bus.export('/org/mpris/MediaPlayer2', new Mpris2Root('org.mpris.MediaPlayer2'));

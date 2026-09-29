@@ -3,5 +3,6 @@
   "compilerOptions": {
     "outDir": "../dist-electron-test"
   },
-  "include": [".", "*.test.ts"]
+  "include": [".", "*.test.ts"],
+  "exclude": ["preload.ts"]
 }
