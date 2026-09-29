@@ -33,6 +33,11 @@ This section separates what's been built and tested from what's just configured.
 - MPRIS: the app registers a real D-Bus service (`org.mpris.MediaPlayer2.auralis`), and this was checked directly with `dbus-send` — a live `Identity` query returned `"Auralis"` from a running instance. Play/pause/next/previous work by clicking the web player's own on-page buttons (there's no MusicKit access to call instead), which is inherently best-effort: if Apple changes its page markup, track skip could quietly stop working. It hasn't been checked against a real GNOME Shell or KDE media widget, only against raw D-Bus calls.
 - The AppImage was actually built and run, not just configured — it launches, shows the splash, and loads the real Apple Music page cleanly.
 - The Arch package: a `.pkg.tar.zst` built from the `PKGBUILD`'s packaging logic was checked and is structurally correct, and the exact binary it installs was launched directly and ran with zero errors. What wasn't done is the final `sudo pacman -U` — this development session had no interactive sudo access to run it.
+- Single-instance lock: launching Auralis a second time brings the existing window forward instead of opening a duplicate (which would otherwise mean two windows both playing audio and both fighting over the same MPRIS bus name). Verified by actually launching it twice — the second process never reaches window/MPRIS setup at all.
+- Offline handling: a network failure (server unreachable, no connection) shows a branded retry page instead of Chromium's bare error screen, and keeps retrying every 5 seconds until it reconnects. Verified for real by forcing a connection failure (`--host-resolver-rules`) and watching it detect the failure, show the page, and keep retrying on schedule.
+- Renderer crash recovery: if the page itself crashes rather than just failing to load, the window automatically reloads instead of sitting there permanently blank.
+- Start at Login and Sign Out, both in the tray menu — sign-out clears the persistent session partition and forces a fresh sign-in page.
+- A lightweight update check against GitHub's releases API (no telemetry, a single unauthenticated request): silent on startup unless a newer version exists, plus a manual "Check for Updates" tray item.
 
 **Not possible, and why:**
 

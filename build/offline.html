@@ -1,0 +1,63 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:;" />
+<title>Auralis</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #0b0b0d;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: -apple-system, "SF Pro Display", "Segoe UI", Roboto, Ubuntu, sans-serif;
+  }
+  .wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    max-width: 320px;
+    text-align: center;
+  }
+  .mark {
+    width: 72px;
+    height: 72px;
+    border-radius: 20px;
+    background: radial-gradient(circle at 50% 40%, #241338 0%, #150c1e 70%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.6;
+  }
+  .mark svg { width: 40px; height: 40px; }
+  .title {
+    color: #f2f2f4;
+    font-size: 18px;
+    font-weight: 600;
+  }
+  .status {
+    color: #8b8b93;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="mark">
+      <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+        <rect x="4"  y="22" width="7" height="20" rx="3.5" fill="#6b6b78"/>
+        <rect x="16" y="14" width="7" height="36" rx="3.5" fill="#6b6b78"/>
+        <rect x="28" y="6"  width="7" height="52" rx="3.5" fill="#6b6b78"/>
+        <rect x="40" y="14" width="7" height="36" rx="3.5" fill="#6b6b78"/>
+        <rect x="52" y="22" width="7" height="20" rx="3.5" fill="#6b6b78"/>
+      </svg>
+    </div>
+    <div class="title">Can't reach Apple Music</div>
+    <div class="status">Checking your connection and retrying automatically&hellip;</div>
+  </div>
+</body>
+</html>

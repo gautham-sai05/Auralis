@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { setupMpris } from './mpris.js';
 import { isAllowedUrl } from './url-guard.js';
 import { loadWindowState, trackWindowState } from './window-state.js';
+import { checkForUpdate } from './update-checker.js';
 
 const { app, BrowserWindow, Menu, Tray, nativeImage, shell, ipcMain, session, Notification } = electron;
 
@@ -21,6 +22,15 @@ const { app, BrowserWindow, Menu, Tray, nativeImage, shell, ipcMain, session, No
 // startup is the right tradeoff here.
 app.disableHardwareAcceleration();
 
+// Without this, launching Auralis twice creates two windows both trying to
+// play audio and both trying to claim the same MPRIS bus name (only one
+// would win, leaving the other's media keys dead) — a real, easy-to-hit bug
+// for anyone with a "launch on login" habit or a flaky launcher double-click.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !app.isPackaged;
 
@@ -30,6 +40,14 @@ let mainWindow: BrowserWindowType | null = null;
 let tray: TrayType | null = null;
 let isQuitting = false;
 let hasShownTrayHint = false;
+let offlineRetryTimer: ReturnType<typeof setInterval> | null = null;
+
+function stopOfflineRetry(): void {
+  if (offlineRetryTimer) {
+    clearInterval(offlineRetryTimer);
+    offlineRetryTimer = null;
+  }
+}
 
 function createWindow(): BrowserWindowType {
   const state = loadWindowState(app.getPath('userData'));
@@ -70,6 +88,37 @@ function createWindow(): BrowserWindowType {
   void win.loadFile(path.join(__dirname, '..', 'build', 'loading.html'));
   win.webContents.once('did-finish-load', () => {
     if (win.webContents.getURL().startsWith('file://')) {
+      void win.loadURL(APPLE_MUSIC_URL);
+    }
+  });
+
+  // Network failures (offline, DNS down, Apple's servers unreachable) would
+  // otherwise show Chromium's bare "can't reach this page" error screen —
+  // jarring and inconsistent with the rest of the app. Show a branded page
+  // instead and keep retrying quietly until it comes back.
+  win.webContents.on('did-fail-load', (_event, errorCode, description, validatedURL, isMainFrame) => {
+    if (!isMainFrame || errorCode === -3 /* ERR_ABORTED: a normal cancelled navigation */) return;
+    if (validatedURL.startsWith('file://')) return; // don't loop if the local page itself fails
+    console.warn(`[auralis] failed to load ${validatedURL}: ${description} (${errorCode}); showing offline page`);
+    void win.loadFile(path.join(__dirname, '..', 'build', 'offline.html'));
+    if (!offlineRetryTimer) {
+      offlineRetryTimer = setInterval(() => {
+        void win.loadURL(APPLE_MUSIC_URL);
+      }, 5000);
+    }
+  });
+  win.webContents.on('did-finish-load', () => {
+    if (win.webContents.getURL().includes('music.apple.com')) {
+      stopOfflineRetry();
+    }
+  });
+
+  // If the renderer itself crashes (OOM, a Chromium bug) rather than just
+  // failing to load, Electron leaves a blank, permanently dead window with
+  // no way back short of force-quitting. Reload it automatically instead.
+  win.webContents.on('render-process-gone', (_event, details) => {
+    console.warn('[auralis] renderer process gone:', details.reason);
+    if (details.reason !== 'clean-exit') {
       void win.loadURL(APPLE_MUSIC_URL);
     }
   });
@@ -117,7 +166,30 @@ function createWindow(): BrowserWindowType {
     }
   });
 
+  win.on('closed', stopOfflineRetry);
+
   return win;
+}
+
+async function notifyUpdateResult(silent: boolean): Promise<void> {
+  const result = await checkForUpdate(app.getVersion());
+  if (!result) {
+    if (!silent && Notification.isSupported()) {
+      new Notification({ title: 'Auralis', body: "Couldn't check for updates right now." }).show();
+    }
+    return;
+  }
+  if (result.available) {
+    if (Notification.isSupported()) {
+      new Notification({
+        title: 'Update available',
+        body: 'A newer version of Auralis is available on GitHub.',
+      }).show();
+    }
+    void shell.openExternal(result.url);
+  } else if (!silent && Notification.isSupported()) {
+    new Notification({ title: 'Auralis', body: "You're up to date." }).show();
+  }
 }
 
 function createTray(win: BrowserWindowType): TrayType {
@@ -125,41 +197,96 @@ function createTray(win: BrowserWindowType): TrayType {
   const trayIcon = icon.isEmpty() ? nativeImage.createEmpty() : icon.resize({ width: 24, height: 24 });
   const t = new Tray(trayIcon);
   t.setToolTip('Auralis');
-  const menu = Menu.buildFromTemplate([
-    { label: 'Show Auralis', click: () => win.show() },
-    { type: 'separator' },
-    {
-      label: 'Quit',
-      click: () => {
-        isQuitting = true;
-        app.quit();
+
+  const rebuildMenu = (): void => {
+    let openAtLogin = false;
+    try {
+      openAtLogin = app.getLoginItemSettings().openAtLogin;
+    } catch {
+      // Login-item support varies across Linux desktop environments; if the
+      // query fails, just default the toggle to off rather than crashing.
+    }
+    const menu = Menu.buildFromTemplate([
+      { label: 'Show Auralis', click: () => win.show() },
+      { type: 'separator' },
+      {
+        label: 'Start at Login',
+        type: 'checkbox',
+        checked: openAtLogin,
+        click: (item) => {
+          try {
+            app.setLoginItemSettings({ openAtLogin: item.checked });
+          } catch {
+            // Best-effort; some Linux setups don't support this.
+          }
+        },
       },
-    },
-  ]);
-  t.setContextMenu(menu);
+      {
+        label: 'Check for Updates…',
+        click: () => void notifyUpdateResult(false),
+      },
+      {
+        label: 'Sign Out',
+        click: () => {
+          void session
+            .fromPartition('persist:auralis')
+            .clearStorageData()
+            .then(() => win.loadURL(APPLE_MUSIC_URL));
+        },
+      },
+      { type: 'separator' },
+      {
+        label: 'Quit',
+        click: () => {
+          isQuitting = true;
+          app.quit();
+        },
+      },
+    ]);
+    t.setContextMenu(menu);
+  };
+
+  rebuildMenu();
   t.on('click', () => win.show());
   return t;
 }
 
-app.whenReady().then(() => {
-  mainWindow = createWindow();
-  tray = createTray(mainWindow);
-
-  setupMpris(mainWindow).catch((err) => {
-    // MPRIS is a nice-to-have; its absence must never crash the app.
-    console.warn('[auralis] MPRIS integration unavailable:', err instanceof Error ? err.stack : err);
-  });
-
-  ipcMain.handle('app:getVersion', () => app.getVersion());
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      mainWindow = createWindow();
-    } else {
-      mainWindow?.show();
+if (gotSingleInstanceLock) {
+  // A second launch attempt (e.g. clicking the app icon again) should just
+  // bring the existing window forward, not open a second one.
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
     }
   });
-});
+
+  app.whenReady().then(() => {
+    mainWindow = createWindow();
+    tray = createTray(mainWindow);
+
+    setupMpris(mainWindow).catch((err) => {
+      // MPRIS is a nice-to-have; its absence must never crash the app.
+      console.warn('[auralis] MPRIS integration unavailable:', err instanceof Error ? err.stack : err);
+    });
+
+    ipcMain.handle('app:getVersion', () => app.getVersion());
+
+    // Delayed and silent: only speaks up if an update is actually available,
+    // well after the app has had time to load so it never competes with
+    // startup for network bandwidth.
+    setTimeout(() => void notifyUpdateResult(true), 15000);
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        mainWindow = createWindow();
+      } else {
+        mainWindow?.show();
+      }
+    });
+  });
+}
 
 app.on('before-quit', () => {
   isQuitting = true;
