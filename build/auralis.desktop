@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Auralis
+GenericName=Apple Music Client
+Comment=Unofficial Apple Music client for Linux
+Exec=auralis %U
+Icon=auralis
+Terminal=false
+Categories=AudioVideo;Audio;Player;Network;
+StartupWMClass=Auralis
+StartupNotify=true

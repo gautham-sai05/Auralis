@@ -1,0 +1,34 @@
+{
+  "name": "auralis",
+  "version": "0.1.0",
+  "description": "An unofficial, secure Apple Music desktop client for Linux",
+  "author": "Gautham Sai <https://github.com/gautham-sai05>",
+  "license": "MIT",
+  "private": true,
+  "main": "dist-electron/main.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p electron/tsconfig.json",
+    "typecheck": "tsc -p electron/tsconfig.json --noEmit",
+    "lint": "eslint electron --ext .ts",
+    "test": "node --test dist-electron-test/*.test.js",
+    "pretest": "tsc -p electron/tsconfig.test.json",
+    "start": "npm run build && electron .",
+    "package:appimage": "npm run build && electron-builder --linux AppImage",
+    "package:deb": "npm run build && electron-builder --linux deb",
+    "package:pacman": "npm run build && electron-builder --linux pacman",
+    "package:all": "npm run build && electron-builder --linux AppImage deb pacman"
+  },
+  "dependencies": {
+    "dbus-next": "0.10.2"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.12",
+    "@typescript-eslint/eslint-plugin": "7.16.1",
+    "@typescript-eslint/parser": "7.16.1",
+    "electron": "31.3.0",
+    "electron-builder": "24.13.3",
+    "eslint": "8.57.0",
+    "typescript": "5.5.4"
+  }
+}

@@ -1,0 +1,32 @@
+# Maintainer: Gautham Sai <https://github.com/gautham-sai05>
+pkgname=auralis
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Unofficial Apple Music client for Linux (Electron shell around music.apple.com)"
+arch=('x86_64')
+url="https://github.com/gautham-sai05/Auralis"
+license=('MIT')
+depends=('gtk3' 'nss' 'libxss' 'alsa-lib' 'libnotify')
+makedepends=('nodejs' 'npm' 'git')
+options=('!strip')
+source=("git+https://github.com/gautham-sai05/Auralis.git#tag=v${pkgver}")
+sha256sums=('SKIP')
+
+build() {
+  cd "$srcdir/Auralis"
+  npm ci
+  npm run build
+  npx electron-builder --linux pacman --x64 --config.directories.output="$srcdir/release"
+}
+
+package() {
+  local relbase="$srcdir/release"
+  local pkgdir_extract
+  pkgdir_extract=$(find "$relbase" -maxdepth 1 -iname "*.pacman" | head -n1)
+  if [ -z "$pkgdir_extract" ]; then
+    echo "error: built pacman package not found in $relbase" >&2
+    return 1
+  fi
+  bsdtar -xf "$pkgdir_extract" -C "$pkgdir"
+  rm -rf "$pkgdir/.PKGINFO" "$pkgdir/.MTREE" "$pkgdir/.BUILDINFO" "$pkgdir/.INSTALL" 2>/dev/null || true
+}

@@ -1,0 +1,42 @@
+appId: dev.gauthamsai.auralis
+productName: Auralis
+copyright: Copyright © 2026 Gautham Sai
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist-electron/**/*
+  - package.json
+  - "!node_modules/**/*.map"
+extraMetadata:
+  main: dist-electron/main.js
+linux:
+  icon: build/icon.png
+  category: AudioVideo
+  desktop:
+    entry:
+      Name: Auralis
+      Comment: Unofficial Apple Music client for Linux
+      Categories: AudioVideo;Audio;Player;Network;
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+    - target: pacman
+      arch: [x64]
+maintainer: Gautham Sai <https://github.com/gautham-sai05>
+deb:
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libasound2
+pacman:
+  depends:
+    - gtk3
+    - libnotify
+    - nss
+    - libxss
+    - alsa-lib
