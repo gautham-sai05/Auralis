@@ -28,6 +28,10 @@ linux:
       arch: [x64]
     - target: pacman
       arch: [x64]
+    - target: rpm
+      arch: [x64]
+    - target: flatpak
+      arch: [x64]
 deb:
   maintainer: Gautham Sai <https://github.com/gautham-sai05>
   depends:
@@ -43,3 +47,23 @@ pacman:
     - nss
     - libxss
     - alsa-lib
+rpm:
+  depends:
+    - gtk3
+    - libnotify
+    - nss
+    - libXScrnSaver
+    - alsa-lib
+flatpak:
+  runtimeVersion: "23.08"
+  finishArgs:
+    - --share=network
+    - --share=ipc
+    - --socket=wayland
+    - --socket=fallback-x11
+    - --socket=pulseaudio
+    - --device=dri
+    # Narrow D-Bus grants rather than full session-bus access: just enough
+    # for desktop notifications and for Auralis to own its own MPRIS name.
+    - --talk-name=org.freedesktop.Notifications
+    - --own-name=org.mpris.MediaPlayer2.auralis

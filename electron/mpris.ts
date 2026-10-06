@@ -55,6 +55,7 @@ interface MediaSessionSnapshot {
   playing: boolean;
   position: number;
   duration: number;
+  volume: number;
 }
 
 // Best-effort DOM control: Apple's web player exposes no public control API
@@ -68,7 +69,23 @@ const CONTROL_SCRIPTS: Record<string, string> = {
   previous: `(function(){var b=document.querySelector('[aria-label="Previous"]');if(b)b.click();})();`,
 };
 
-export async function setupMpris(win: BrowserWindow): Promise<void> {
+// The underlying <audio>/<video> element is a real, directly addressable
+// DOM node (unlike transport, which has no element-level API and has to go
+// through on-page buttons), so volume and seeking can be set precisely
+// rather than simulated by clicking a slider.
+function setVolumeScript(volume: number): string {
+  const clamped = Math.max(0, Math.min(1, volume));
+  return `(function(){var a=document.querySelector('audio,video');if(a)a.volume=${clamped};})();`;
+}
+function setPositionScript(seconds: number): string {
+  const clamped = Math.max(0, seconds);
+  return `(function(){var a=document.querySelector('audio,video');if(a)a.currentTime=${clamped};})();`;
+}
+function seekRelativeScript(offsetSeconds: number): string {
+  return `(function(){var a=document.querySelector('audio,video');if(a)a.currentTime=Math.max(0,a.currentTime+(${offsetSeconds}));})();`;
+}
+
+export async function setupMpris(win: BrowserWindow, isNotificationsEnabled: () => boolean = () => true): Promise<void> {
   let lastSnapshot: MediaSessionSnapshot | null = null;
   let lastNotifiedTitle: string | null = null;
 
@@ -76,7 +93,7 @@ export async function setupMpris(win: BrowserWindow): Promise<void> {
     lastSnapshot = snapshot;
     if (snapshot.title && snapshot.title !== lastNotifiedTitle) {
       lastNotifiedTitle = snapshot.title;
-      if (Notification.isSupported()) {
+      if (isNotificationsEnabled() && Notification.isSupported()) {
         const show = (icon?: string): void => {
           new Notification({
             title: snapshot.title ?? '',
@@ -179,10 +196,25 @@ export async function setupMpris(win: BrowserWindow): Promise<void> {
       return true;
     }
     get CanSeek(): boolean {
-      return false;
+      return true;
     }
     get CanControl(): boolean {
       return true;
+    }
+    get Position(): bigint {
+      return BigInt(Math.floor((lastSnapshot?.position ?? 0) * 1_000_000));
+    }
+    get Volume(): number {
+      return lastSnapshot?.volume ?? 1;
+    }
+    set Volume(value: number) {
+      void win.webContents.executeJavaScript(setVolumeScript(value)).catch(() => undefined);
+    }
+    Seek(offsetMicroseconds: bigint): void {
+      void win.webContents.executeJavaScript(seekRelativeScript(Number(offsetMicroseconds) / 1_000_000)).catch(() => undefined);
+    }
+    SetPosition(_trackId: string, positionMicroseconds: bigint): void {
+      void win.webContents.executeJavaScript(setPositionScript(Number(positionMicroseconds) / 1_000_000)).catch(() => undefined);
     }
     PlayPause(): void {
       void win.webContents.executeJavaScript(CONTROL_SCRIPTS.playPause).catch(() => undefined);
@@ -213,6 +245,8 @@ export async function setupMpris(win: BrowserWindow): Promise<void> {
       CanPause: { signature: 'b', access: 'read' },
       CanSeek: { signature: 'b', access: 'read' },
       CanControl: { signature: 'b', access: 'read' },
+      Position: { signature: 'x', access: 'read' },
+      Volume: { signature: 'd', access: 'readwrite' },
     },
     methods: {
       PlayPause: { inSignature: '', outSignature: '' },
@@ -221,6 +255,8 @@ export async function setupMpris(win: BrowserWindow): Promise<void> {
       Next: { inSignature: '', outSignature: '' },
       Previous: { inSignature: '', outSignature: '' },
       Stop: { inSignature: '', outSignature: '' },
+      Seek: { inSignature: 'x', outSignature: '' },
+      SetPosition: { inSignature: 'ox', outSignature: '' },
     },
   });
 

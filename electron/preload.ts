@@ -19,6 +19,7 @@ interface MediaSessionSnapshot {
   playing: boolean;
   position: number;
   duration: number;
+  volume: number;
 }
 
 // Poll the page's Media Session API (set by Apple's own player) and forward
@@ -37,6 +38,7 @@ function pollMediaSession(): void {
       playing: audio ? !audio.paused : false,
       position: audio?.currentTime ?? 0,
       duration: audio?.duration ?? 0,
+      volume: audio?.volume ?? 1,
     };
     ipcRenderer.send('media-session:snapshot', snapshot);
   } catch {

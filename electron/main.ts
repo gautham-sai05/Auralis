@@ -1,11 +1,12 @@
 import electron from 'electron';
-import type { BrowserWindow as BrowserWindowType, Tray as TrayType } from 'electron';
+import type { BrowserWindow as BrowserWindowType, Tray as TrayType, Event as ElectronEvent } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setupMpris } from './mpris.js';
 import { isAllowedUrl } from './url-guard.js';
 import { loadWindowState, trackWindowState } from './window-state.js';
 import { checkForUpdate } from './update-checker.js';
+import { loadSettings, saveSettings, type Settings } from './settings.js';
 
 const { app, BrowserWindow, Menu, Tray, nativeImage, shell, ipcMain, session, Notification } = electron;
 
@@ -39,8 +40,12 @@ const APPLE_MUSIC_URL = 'https://music.apple.com/';
 let mainWindow: BrowserWindowType | null = null;
 let tray: TrayType | null = null;
 let isQuitting = false;
-let hasShownTrayHint = false;
 let offlineRetryTimer: ReturnType<typeof setInterval> | null = null;
+let settings: Settings = { notificationsEnabled: true, minimizeToTray: false, hasShownTrayHint: false };
+
+function persistSettings(): void {
+  saveSettings(app.getPath('userData'), settings);
+}
 
 function stopOfflineRetry(): void {
   if (offlineRetryTimer) {
@@ -153,9 +158,10 @@ function createWindow(): BrowserWindowType {
     if (!isQuitting) {
       event.preventDefault();
       win.hide();
-      if (!hasShownTrayHint) {
-        hasShownTrayHint = true;
-        if (Notification.isSupported()) {
+      if (!settings.hasShownTrayHint) {
+        settings.hasShownTrayHint = true;
+        persistSettings();
+        if (settings.notificationsEnabled && Notification.isSupported()) {
           new Notification({
             title: 'Auralis is still running',
             body: 'Closing the window keeps Auralis in the tray. Quit from the tray menu to exit fully.',
@@ -166,6 +172,16 @@ function createWindow(): BrowserWindowType {
     }
   });
 
+  // Opt-in: some users want the taskbar entry gone on minimize too, not
+  // just on close. Off by default since it changes window-manager behavior
+  // users didn't ask for; toggled from the tray menu.
+  win.on('minimize', (event: ElectronEvent) => {
+    if (settings.minimizeToTray) {
+      event.preventDefault();
+      win.hide();
+    }
+  });
+
   win.on('closed', stopOfflineRetry);
 
   return win;
@@ -173,21 +189,22 @@ function createWindow(): BrowserWindowType {
 
 async function notifyUpdateResult(silent: boolean): Promise<void> {
   const result = await checkForUpdate(app.getVersion());
+  const canNotify = settings.notificationsEnabled && Notification.isSupported();
   if (!result) {
-    if (!silent && Notification.isSupported()) {
+    if (!silent && canNotify) {
       new Notification({ title: 'Auralis', body: "Couldn't check for updates right now." }).show();
     }
     return;
   }
   if (result.available) {
-    if (Notification.isSupported()) {
+    if (canNotify) {
       new Notification({
         title: 'Update available',
         body: 'A newer version of Auralis is available on GitHub.',
       }).show();
     }
     void shell.openExternal(result.url);
-  } else if (!silent && Notification.isSupported()) {
+  } else if (!silent && canNotify) {
     new Notification({ title: 'Auralis', body: "You're up to date." }).show();
   }
 }
@@ -221,6 +238,25 @@ function createTray(win: BrowserWindowType): TrayType {
           }
         },
       },
+      {
+        label: 'Minimize to Tray',
+        type: 'checkbox',
+        checked: settings.minimizeToTray,
+        click: (item) => {
+          settings.minimizeToTray = item.checked;
+          persistSettings();
+        },
+      },
+      {
+        label: 'Notifications',
+        type: 'checkbox',
+        checked: settings.notificationsEnabled,
+        click: (item) => {
+          settings.notificationsEnabled = item.checked;
+          persistSettings();
+        },
+      },
+      { type: 'separator' },
       {
         label: 'Check for Updates…',
         click: () => void notifyUpdateResult(false),
@@ -263,10 +299,11 @@ if (gotSingleInstanceLock) {
   });
 
   app.whenReady().then(() => {
+    settings = loadSettings(app.getPath('userData'));
     mainWindow = createWindow();
     tray = createTray(mainWindow);
 
-    setupMpris(mainWindow).catch((err) => {
+    setupMpris(mainWindow, () => settings.notificationsEnabled).catch((err) => {
       // MPRIS is a nice-to-have; its absence must never crash the app.
       console.warn('[auralis] MPRIS integration unavailable:', err instanceof Error ? err.stack : err);
     });
