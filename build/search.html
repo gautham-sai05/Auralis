@@ -10,6 +10,10 @@
     background: transparent;
     font-family: -apple-system, "SF Pro Display", "Segoe UI", Roboto, Ubuntu, sans-serif;
   }
+  @keyframes riseIn {
+    from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
   .box {
     display: flex;
     align-items: center;
@@ -21,6 +25,7 @@
     border-radius: 14px;
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
     box-sizing: border-box;
+    animation: riseIn 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
   }
   .icon { opacity: 0.5; flex-shrink: 0; }
   input {
@@ -30,6 +35,7 @@
     outline: none;
     color: #f2f2f4;
     font-size: 17px;
+    transition: color 0.15s ease;
   }
   input::placeholder { color: #6b6b78; }
   .hint {

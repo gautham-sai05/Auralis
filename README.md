@@ -35,11 +35,16 @@ Without a MusicKit token, a custom native UI would mean shipping controls that d
 - Recently played history with one-click return to any of the last 20 tracks
 - Copy/open the current track's link, for sharing what's playing
 - In-app keyboard shortcuts for playback, volume, seeking, zoom, and navigation (see below)
+- Sleep timer — stop playback after a set time or at the end of the current track
+- A dedicated Preferences window for every toggle (login, tray behavior, notifications, hardware acceleration, equalizer), replacing a sprawling tray menu
+- Export/import settings and history as a single JSON file
 - A lightweight, non-telemetry update checker against GitHub releases
 
 **Performance**
-- Hardware acceleration is configurable (tray toggle): off by default to avoid a known GPU crash loop on some Wayland/Mesa driver combinations, but can be re-enabled on hardware that doesn't hit it
-- No background polling beyond a lightweight once-per-second now-playing check; all other timers (offline retry, update check) are event-driven or one-shot
+- Hardware acceleration is configurable (Preferences): off by default to avoid a known GPU crash loop on some Wayland/Mesa driver combinations, but can be re-enabled on hardware that doesn't hit it
+- No background polling beyond a lightweight once-per-second now-playing check; every other timer (offline retry, sleep timer, update check) is event-driven or one-shot and is cleared the moment it's no longer needed
+- The mini player, search palette, and Preferences window are created on demand and fully destroyed on close — nothing stays resident in memory when not in use
+- A single, shared playback-control code path (`player-control.ts`) backs MPRIS, the mini player, and all keyboard shortcuts, instead of duplicated logic drifting out of sync
 
 ## Keyboard shortcuts
 

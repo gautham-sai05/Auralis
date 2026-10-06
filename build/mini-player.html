@@ -5,6 +5,10 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src https://is1-ssl.mzstatic.com https://is2-ssl.mzstatic.com https://is3-ssl.mzstatic.com https://is4-ssl.mzstatic.com https://is5-ssl.mzstatic.com https://is6-ssl.mzstatic.com data:;" />
 <title>Auralis Mini Player</title>
 <style>
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
   html, body {
     margin: 0;
     height: 100%;
@@ -13,6 +17,7 @@
     font-family: -apple-system, "SF Pro Display", "Segoe UI", Roboto, Ubuntu, sans-serif;
     overflow: hidden;
     user-select: none;
+    animation: fadeIn 0.18s ease;
   }
   .bar {
     -webkit-app-region: drag;
@@ -65,8 +70,13 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    transition: background-color 0.12s ease, transform 0.1s ease;
   }
   button:hover { background: #38383f; }
+  button:active { transform: scale(0.92); }
+  .art {
+    transition: background-image 0.2s ease;
+  }
   .close {
     position: absolute;
     top: 2px;
@@ -77,6 +87,7 @@
     color: #6b6b78;
     font-size: 14px;
     -webkit-app-region: no-drag;
+    transition: color 0.12s ease;
   }
   .close:hover { color: #f2f2f4; background: transparent; }
 </style>

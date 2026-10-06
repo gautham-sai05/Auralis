@@ -1,6 +1,7 @@
 import electron from 'electron';
 import type { BrowserWindow as BrowserWindowType, Tray as TrayType, Event as ElectronEvent } from 'electron';
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { setupMpris } from './mpris.js';
 import { isAllowedUrl } from './url-guard.js';
@@ -49,13 +50,6 @@ const isDev = !app.isPackaged;
 
 const APPLE_MUSIC_URL = 'https://music.apple.com/';
 
-const EQUALIZER_LABELS: Record<Settings['equalizerPreset'], string> = {
-  flat: 'Flat (Off)',
-  bassBoost: 'Bass Boost',
-  trebleBoost: 'Treble Boost',
-  vocalBoost: 'Vocal Boost',
-};
-
 let mainWindow: BrowserWindowType | null = null;
 let tray: TrayType | null = null;
 let searchPalette: BrowserWindowType | null = null;
@@ -64,6 +58,9 @@ let latestSnapshot: { title: string | null; artist: string | null; artwork: stri
   null;
 let isQuitting = false;
 let offlineRetryTimer: ReturnType<typeof setInterval> | null = null;
+let sleepTimer: ReturnType<typeof setTimeout> | null = null;
+let sleepTimerMinutes: number | null = null;
+let sleepAtEndOfTrack = false;
 const settings: Settings = initialSettings;
 let history: HistoryEntry[] = [];
 let currentTrack: HistoryEntry | null = null;
@@ -149,6 +146,132 @@ function closeMiniPlayer(): void {
   miniPlayer?.close();
 }
 
+let preferencesWindow: BrowserWindowType | null = null;
+
+function openPreferences(): void {
+  if (preferencesWindow) {
+    preferencesWindow.focus();
+    return;
+  }
+  const win = new BrowserWindow({
+    width: 420,
+    height: 560,
+    parent: mainWindow ?? undefined,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    backgroundColor: '#0f0f12',
+    show: false,
+    title: 'Auralis Preferences',
+    webPreferences: {
+      preload: path.join(__dirname, 'prefs-preload.cjs'),
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+    },
+  });
+  void win.loadFile(path.join(__dirname, '..', 'build', 'prefs.html'));
+  win.once('ready-to-show', () => win.show());
+  preferencesWindow = win;
+  win.on('closed', () => {
+    preferencesWindow = null;
+  });
+}
+
+ipcMain.handle('prefs:getState', () => {
+  let openAtLogin = false;
+  try {
+    openAtLogin = app.getLoginItemSettings().openAtLogin;
+  } catch {
+    // Best-effort; some Linux setups don't support this.
+  }
+  return { settings, openAtLogin };
+});
+
+ipcMain.on('prefs:setSetting', (_event, key: unknown, value: unknown) => {
+  if (key === 'minimizeToTray' || key === 'notificationsEnabled' || key === 'hardwareAcceleration') {
+    if (typeof value === 'boolean') {
+      settings[key] = value;
+      persistSettings();
+      rebuildTrayMenu?.();
+    }
+  } else if (key === 'equalizerPreset') {
+    if (value === 'flat' || value === 'bassBoost' || value === 'trebleBoost' || value === 'vocalBoost') {
+      settings.equalizerPreset = value;
+      persistSettings();
+      if (mainWindow) createPlayerControl(mainWindow).setEqualizer(value);
+      rebuildTrayMenu?.();
+    }
+  }
+});
+
+ipcMain.on('prefs:setLoginItem', (_event, enabled: unknown) => {
+  if (typeof enabled !== 'boolean') return;
+  try {
+    app.setLoginItemSettings({ openAtLogin: enabled });
+  } catch {
+    // Best-effort; some Linux setups don't support this.
+  }
+  rebuildTrayMenu?.();
+});
+
+ipcMain.on('prefs:relaunch', () => {
+  isQuitting = true;
+  app.relaunch();
+  app.exit(0);
+});
+
+interface ExportedData {
+  auralisExportVersion: 1;
+  settings: Settings;
+  history: HistoryEntry[];
+}
+
+ipcMain.handle('prefs:export', async () => {
+  const win = preferencesWindow ?? mainWindow;
+  if (!win) return null;
+  const { filePath, canceled } = await dialog.showSaveDialog(win, {
+    title: 'Export Auralis Settings',
+    defaultPath: 'auralis-settings.json',
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+  });
+  if (canceled || !filePath) return null;
+  const data: ExportedData = { auralisExportVersion: 1, settings, history };
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+    return filePath;
+  } catch {
+    return null;
+  }
+});
+
+ipcMain.handle('prefs:import', async () => {
+  const win = preferencesWindow ?? mainWindow;
+  if (!win) return null;
+  const { filePaths, canceled } = await dialog.showOpenDialog(win, {
+    title: 'Import Auralis Settings',
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+    properties: ['openFile'],
+  });
+  if (canceled || !filePaths[0]) return null;
+  try {
+    const raw = fs.readFileSync(filePaths[0], 'utf-8');
+    const parsed = JSON.parse(raw) as Partial<ExportedData>;
+    if (parsed.settings && typeof parsed.settings === 'object') {
+      Object.assign(settings, parsed.settings);
+      persistSettings();
+    }
+    if (Array.isArray(parsed.history)) {
+      history = parsed.history;
+      saveHistory(app.getPath('userData'), history);
+    }
+    rebuildTrayMenu?.();
+    return filePaths[0];
+  } catch {
+    return null;
+  }
+});
+
 ipcMain.on('mini-player:close', () => closeMiniPlayer());
 ipcMain.on('mini-player:control', (_event, action: unknown) => {
   if (!mainWindow) return;
@@ -168,6 +291,34 @@ ipcMain.on('search-palette:submit', (_event, query: unknown) => {
   }
   closeSearchPalette();
 });
+
+function clearSleepTimer(): void {
+  if (sleepTimer) {
+    clearTimeout(sleepTimer);
+    sleepTimer = null;
+  }
+  sleepTimerMinutes = null;
+  sleepAtEndOfTrack = false;
+}
+
+function setSleepTimerMinutes(minutes: number): void {
+  clearSleepTimer();
+  sleepTimerMinutes = minutes;
+  sleepTimer = setTimeout(() => {
+    if (latestSnapshot?.playing && mainWindow) {
+      createPlayerControl(mainWindow).playPause();
+    }
+    clearSleepTimer();
+    rebuildTrayMenu?.();
+  }, minutes * 60_000);
+  rebuildTrayMenu?.();
+}
+
+function setSleepAtEndOfTrack(): void {
+  clearSleepTimer();
+  sleepAtEndOfTrack = true;
+  rebuildTrayMenu?.();
+}
 
 function stopOfflineRetry(): void {
   if (offlineRetryTimer) {
@@ -416,13 +567,6 @@ function createTray(win: BrowserWindowType): TrayType {
   t.setToolTip('Auralis');
 
   const rebuildMenu = (): void => {
-    let openAtLogin = false;
-    try {
-      openAtLogin = app.getLoginItemSettings().openAtLogin;
-    } catch {
-      // Login-item support varies across Linux desktop environments; if the
-      // query fails, just default the toggle to off rather than crashing.
-    }
     const recentlyPlayed =
       history.length > 0
         ? history.map((entry) => ({
@@ -456,65 +600,36 @@ function createTray(win: BrowserWindowType): TrayType {
           if (currentTrack?.url) void shell.openExternal(currentTrack.url);
         },
       },
-      { type: 'separator' },
       {
-        label: 'Start at Login',
-        type: 'checkbox',
-        checked: openAtLogin,
-        click: (item) => {
-          try {
-            app.setLoginItemSettings({ openAtLogin: item.checked });
-          } catch {
-            // Best-effort; some Linux setups don't support this.
-          }
-        },
-      },
-      {
-        label: 'Minimize to Tray',
-        type: 'checkbox',
-        checked: settings.minimizeToTray,
-        click: (item) => {
-          settings.minimizeToTray = item.checked;
-          persistSettings();
-        },
-      },
-      {
-        label: 'Notifications',
-        type: 'checkbox',
-        checked: settings.notificationsEnabled,
-        click: (item) => {
-          settings.notificationsEnabled = item.checked;
-          persistSettings();
-        },
-      },
-      {
-        label: 'Equalizer',
-        submenu: (['flat', 'bassBoost', 'trebleBoost', 'vocalBoost'] as const).map((preset) => ({
-          label: EQUALIZER_LABELS[preset],
-          type: 'radio' as const,
-          checked: settings.equalizerPreset === preset,
-          click: () => {
-            settings.equalizerPreset = preset;
-            persistSettings();
-            createPlayerControl(win).setEqualizer(preset);
+        label: 'Sleep Timer',
+        submenu: [
+          {
+            label: 'Off',
+            type: 'radio',
+            checked: !sleepTimerMinutes && !sleepAtEndOfTrack,
+            click: () => {
+              clearSleepTimer();
+              rebuildTrayMenu?.();
+            },
           },
-        })),
-      },
-      {
-        label: 'Hardware Acceleration (restarts app)',
-        type: 'checkbox',
-        checked: settings.hardwareAcceleration,
-        click: (item) => {
-          settings.hardwareAcceleration = item.checked;
-          persistSettings();
-          // This is decided once, at module load, before 'ready' — so the
-          // only way to apply a change is a fresh process.
-          isQuitting = true;
-          app.relaunch();
-          app.exit(0);
-        },
+          { type: 'separator' },
+          ...[15, 30, 45, 60].map((minutes) => ({
+            label: `${minutes} minutes`,
+            type: 'radio' as const,
+            checked: sleepTimerMinutes === minutes,
+            click: () => setSleepTimerMinutes(minutes),
+          })),
+          { type: 'separator' as const },
+          {
+            label: 'End of Current Track',
+            type: 'radio' as const,
+            checked: sleepAtEndOfTrack,
+            click: () => setSleepAtEndOfTrack(),
+          },
+        ],
       },
       { type: 'separator' },
+      { label: 'Preferences…', click: () => openPreferences() },
       {
         label: 'Check for Updates…',
         click: () => void notifyUpdateResult(false),
@@ -581,6 +696,15 @@ if (gotSingleInstanceLock) {
         url: snapshot.url && snapshot.url.includes('music.apple.com') ? snapshot.url : null,
         playedAt: Date.now(),
       };
+      // "Sleep at end of track" means the *previous* track, not this new
+      // one — pause now, before updating currentTrack, so the notification
+      // and history entry for the track that just started don't fire for a
+      // track that's immediately paused.
+      if (sleepAtEndOfTrack && mainWindow) {
+        createPlayerControl(mainWindow).playPause();
+        clearSleepTimer();
+        rebuildTrayMenu?.();
+      }
       currentTrack = entry;
       history = addEntry(history, entry);
       saveHistory(app.getPath('userData'), history);
@@ -625,6 +749,8 @@ if (gotSingleInstanceLock) {
 app.on('before-quit', () => {
   isQuitting = true;
   tray?.destroy();
+  clearSleepTimer();
+  stopOfflineRetry();
 });
 
 app.on('window-all-closed', () => {

@@ -1,0 +1,132 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self';" />
+<title>Auralis Preferences</title>
+<style>
+  html, body {
+    margin: 0;
+    background: #0f0f12;
+    color: #f2f2f4;
+    font-family: -apple-system, "SF Pro Display", "Segoe UI", Roboto, Ubuntu, sans-serif;
+  }
+  body { padding: 18px 22px; box-sizing: border-box; }
+  h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #8b8b93;
+    margin: 20px 0 8px;
+  }
+  h2:first-of-type { margin-top: 0; }
+  label.row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 0;
+    font-size: 14px;
+    border-bottom: 1px solid #22222a;
+    transition: opacity 0.12s ease;
+  }
+  label.row:hover { opacity: 0.85; }
+  label.row span.desc {
+    display: block;
+    font-size: 11px;
+    color: #8b8b93;
+    margin-top: 2px;
+  }
+  input[type="checkbox"] { width: 18px; height: 18px; flex-shrink: 0; }
+  select {
+    background: #1c1c22;
+    color: #f2f2f4;
+    border: 1px solid #2c2c33;
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 13px;
+    transition: border-color 0.12s ease;
+  }
+  select:hover, select:focus { border-color: #4a3ba0; }
+  .btn-row { display: flex; gap: 10px; margin-top: 18px; }
+  button {
+    flex: 1;
+    background: #1c1c22;
+    color: #f2f2f4;
+    border: 1px solid #2c2c33;
+    border-radius: 8px;
+    padding: 10px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background-color 0.12s ease, transform 0.08s ease;
+  }
+  button:hover { background: #26262e; }
+  button:active { transform: scale(0.98); }
+  button.primary { background: #4a3ba0; border-color: #4a3ba0; }
+  button.primary:hover { background: #5648b5; }
+  #restartNotice {
+    display: none;
+    margin-top: 14px;
+    padding: 10px 12px;
+    background: #2a2210;
+    border: 1px solid #4a3c18;
+    border-radius: 8px;
+    font-size: 12px;
+    color: #e8c36a;
+    animation: fadeIn 0.18s ease;
+  }
+  #status {
+    margin-top: 10px;
+    font-size: 12px;
+    color: #8b8b93;
+    min-height: 14px;
+    transition: opacity 0.2s ease;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  body { animation: fadeIn 0.15s ease; }
+</style>
+</head>
+<body>
+  <h2>General</h2>
+  <label class="row">
+    <span>Start at Login</span>
+    <input type="checkbox" id="startAtLogin" />
+  </label>
+  <label class="row">
+    <span>Minimize to Tray<span class="desc">Hide the window on minimize, not just on close</span></span>
+    <input type="checkbox" id="minimizeToTray" />
+  </label>
+  <label class="row">
+    <span>Notifications<span class="desc">Track-change, tray hint, and update alerts</span></span>
+    <input type="checkbox" id="notificationsEnabled" />
+  </label>
+  <label class="row">
+    <span>Hardware Acceleration<span class="desc">Off avoids a known GPU crash loop on some Wayland/Mesa setups</span></span>
+    <input type="checkbox" id="hardwareAcceleration" />
+  </label>
+
+  <h2>Equalizer</h2>
+  <label class="row">
+    <span>Preset</span>
+    <select id="equalizerPreset">
+      <option value="flat">Flat (Off)</option>
+      <option value="bassBoost">Bass Boost</option>
+      <option value="trebleBoost">Treble Boost</option>
+      <option value="vocalBoost">Vocal Boost</option>
+    </select>
+  </label>
+
+  <h2>Data</h2>
+  <div class="btn-row">
+    <button id="exportBtn">Export Settings…</button>
+    <button id="importBtn">Import Settings…</button>
+  </div>
+
+  <div id="restartNotice">Hardware acceleration changed — restart to apply.<div class="btn-row"><button class="primary" id="restartBtn">Restart Now</button></div></div>
+  <div id="status"></div>
+
+  <script src="prefs.js"></script>
+</body>
+</html>

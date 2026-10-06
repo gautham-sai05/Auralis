@@ -12,5 +12,5 @@
     "resolveJsonModule": true,
     "types": ["node", "electron"]
   },
-  "include": ["preload.ts", "search-preload.ts", "mini-player-preload.ts"]
+  "include": ["preload.ts", "search-preload.ts", "mini-player-preload.ts", "prefs-preload.ts"]
 }
