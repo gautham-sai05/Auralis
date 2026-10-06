@@ -7,8 +7,10 @@ import { isAllowedUrl } from './url-guard.js';
 import { loadWindowState, trackWindowState } from './window-state.js';
 import { checkForUpdate } from './update-checker.js';
 import { loadSettings, saveSettings, type Settings } from './settings.js';
+import { createPlayerControl } from './player-control.js';
+import { loadHistory, saveHistory, addEntry, type HistoryEntry } from './history.js';
 
-const { app, BrowserWindow, Menu, Tray, nativeImage, shell, ipcMain, session, Notification } = electron;
+const { app, BrowserWindow, Menu, Tray, nativeImage, shell, ipcMain, session, Notification, clipboard, dialog } = electron;
 
 // Works around a real, repeatedly-observed crash on this Wayland/Mesa setup:
 // the GPU process segfaults 2-3 times on every cold start trying to allocate
@@ -39,13 +41,68 @@ const APPLE_MUSIC_URL = 'https://music.apple.com/';
 
 let mainWindow: BrowserWindowType | null = null;
 let tray: TrayType | null = null;
+let searchPalette: BrowserWindowType | null = null;
 let isQuitting = false;
 let offlineRetryTimer: ReturnType<typeof setInterval> | null = null;
 let settings: Settings = { notificationsEnabled: true, minimizeToTray: false, hasShownTrayHint: false };
+let history: HistoryEntry[] = [];
+let currentTrack: HistoryEntry | null = null;
+let rebuildTrayMenu: (() => void) | null = null;
 
 function persistSettings(): void {
   saveSettings(app.getPath('userData'), settings);
 }
+
+function openSearchPalette(): void {
+  if (searchPalette) {
+    searchPalette.focus();
+    return;
+  }
+  const parent = mainWindow;
+  const win = new BrowserWindow({
+    width: 560,
+    height: 72,
+    parent: parent ?? undefined,
+    frame: false,
+    resizable: false,
+    movable: false,
+    skipTaskbar: true,
+    transparent: true,
+    backgroundColor: '#00000000',
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'search-preload.cjs'),
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+    },
+  });
+  if (parent) {
+    const pb = parent.getBounds();
+    win.setPosition(Math.round(pb.x + pb.width / 2 - 280), Math.round(pb.y + 120));
+  }
+  void win.loadFile(path.join(__dirname, '..', 'build', 'search.html'));
+  win.once('ready-to-show', () => win.show());
+  searchPalette = win;
+  win.on('closed', () => {
+    searchPalette = null;
+  });
+}
+
+function closeSearchPalette(): void {
+  searchPalette?.close();
+}
+
+ipcMain.on('search-palette:cancel', () => closeSearchPalette());
+ipcMain.on('search-palette:submit', (_event, query: unknown) => {
+  if (typeof query === 'string' && query.trim() && mainWindow) {
+    const url = `https://music.apple.com/search?term=${encodeURIComponent(query.trim())}`;
+    mainWindow.loadURL(url);
+    mainWindow.show();
+    mainWindow.focus();
+  }
+  closeSearchPalette();
+});
 
 function stopOfflineRetry(): void {
   if (offlineRetryTimer) {
@@ -125,6 +182,79 @@ function createWindow(): BrowserWindowType {
     console.warn('[auralis] renderer process gone:', details.reason);
     if (details.reason !== 'clean-exit') {
       void win.loadURL(APPLE_MUSIC_URL);
+    }
+  });
+
+  // In-app keyboard shortcuts. Transport/volume/seek use a Ctrl+Alt modifier
+  // specifically to avoid colliding with anything Apple's own page might
+  // bind to plain arrows/space/digits (e.g. typing in its search box);
+  // zoom and the search palette use conventional combos that Electron
+  // doesn't wire up on its own since this app has no application menu.
+  const control = createPlayerControl(win);
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return;
+    const ctrl = input.control;
+    const alt = input.alt;
+    if (ctrl && alt) {
+      switch (input.key) {
+        case ' ':
+          event.preventDefault();
+          control.playPause();
+          return;
+        case 'ArrowLeft':
+          event.preventDefault();
+          control.seekRelative(-10);
+          return;
+        case 'ArrowRight':
+          event.preventDefault();
+          control.seekRelative(10);
+          return;
+        case 'ArrowUp':
+          event.preventDefault();
+          control.adjustVolume(0.05);
+          return;
+        case 'ArrowDown':
+          event.preventDefault();
+          control.adjustVolume(-0.05);
+          return;
+        case '1':
+          event.preventDefault();
+          void win.loadURL('https://music.apple.com/listen-now');
+          return;
+        case '2':
+          event.preventDefault();
+          void win.loadURL('https://music.apple.com/browse');
+          return;
+        case '3':
+          event.preventDefault();
+          void win.loadURL('https://music.apple.com/library/albums');
+          return;
+        default:
+          break;
+      }
+    } else if (ctrl && !alt) {
+      switch (input.key) {
+        case 'k':
+        case 'K':
+          event.preventDefault();
+          openSearchPalette();
+          return;
+        case '=':
+        case '+':
+          event.preventDefault();
+          win.webContents.setZoomLevel(win.webContents.getZoomLevel() + 0.5);
+          return;
+        case '-':
+          event.preventDefault();
+          win.webContents.setZoomLevel(win.webContents.getZoomLevel() - 0.5);
+          return;
+        case '0':
+          event.preventDefault();
+          win.webContents.setZoomLevel(0);
+          return;
+        default:
+          break;
+      }
     }
   });
 
@@ -223,8 +353,38 @@ function createTray(win: BrowserWindowType): TrayType {
       // Login-item support varies across Linux desktop environments; if the
       // query fails, just default the toggle to off rather than crashing.
     }
+    const recentlyPlayed =
+      history.length > 0
+        ? history.map((entry) => ({
+            label: [entry.title, entry.artist].filter(Boolean).join(' — ') || entry.title,
+            enabled: Boolean(entry.url),
+            click: () => {
+              if (entry.url) {
+                win.loadURL(entry.url);
+                win.show();
+                win.focus();
+              }
+            },
+          }))
+        : [{ label: 'Nothing played yet', enabled: false }];
     const menu = Menu.buildFromTemplate([
       { label: 'Show Auralis', click: () => win.show() },
+      { label: 'Search…', accelerator: 'CmdOrCtrl+K', click: () => openSearchPalette() },
+      { label: 'Recently Played', submenu: recentlyPlayed },
+      {
+        label: 'Copy Current Track Link',
+        enabled: Boolean(currentTrack?.url),
+        click: () => {
+          if (currentTrack?.url) clipboard.writeText(currentTrack.url);
+        },
+      },
+      {
+        label: 'Open Current Track in Browser',
+        enabled: Boolean(currentTrack?.url),
+        click: () => {
+          if (currentTrack?.url) void shell.openExternal(currentTrack.url);
+        },
+      },
       { type: 'separator' },
       {
         label: 'Start at Login',
@@ -270,6 +430,17 @@ function createTray(win: BrowserWindowType): TrayType {
             .then(() => win.loadURL(APPLE_MUSIC_URL));
         },
       },
+      {
+        label: 'About Auralis',
+        click: () => {
+          void dialog.showMessageBox(win, {
+            type: 'info',
+            title: 'About Auralis',
+            message: 'Auralis',
+            detail: `Version ${app.getVersion()}\nAn unofficial Apple Music desktop client for Linux.\nhttps://github.com/gautham-sai05/Auralis`,
+          });
+        },
+      },
       { type: 'separator' },
       {
         label: 'Quit',
@@ -282,6 +453,7 @@ function createTray(win: BrowserWindowType): TrayType {
     t.setContextMenu(menu);
   };
 
+  rebuildTrayMenu = rebuildMenu;
   rebuildMenu();
   t.on('click', () => win.show());
   return t;
@@ -300,10 +472,23 @@ if (gotSingleInstanceLock) {
 
   app.whenReady().then(() => {
     settings = loadSettings(app.getPath('userData'));
+    history = loadHistory(app.getPath('userData'));
     mainWindow = createWindow();
     tray = createTray(mainWindow);
 
-    setupMpris(mainWindow, () => settings.notificationsEnabled).catch((err) => {
+    setupMpris(mainWindow, () => settings.notificationsEnabled, (snapshot) => {
+      const entry: HistoryEntry = {
+        title: snapshot.title ?? '',
+        artist: snapshot.artist,
+        album: snapshot.album,
+        url: snapshot.url && snapshot.url.includes('music.apple.com') ? snapshot.url : null,
+        playedAt: Date.now(),
+      };
+      currentTrack = entry;
+      history = addEntry(history, entry);
+      saveHistory(app.getPath('userData'), history);
+      rebuildTrayMenu?.();
+    }).catch((err) => {
       // MPRIS is a nice-to-have; its absence must never crash the app.
       console.warn('[auralis] MPRIS integration unavailable:', err instanceof Error ? err.stack : err);
     });

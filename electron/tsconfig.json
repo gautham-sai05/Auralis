@@ -13,5 +13,5 @@
     "types": ["node", "electron"]
   },
   "include": ["."],
-  "exclude": ["preload.ts", "*.test.ts"]
+  "exclude": ["preload.ts", "search-preload.ts", "*.test.ts"]
 }

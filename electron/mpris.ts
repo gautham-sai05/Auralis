@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import https from 'node:https';
+import { createPlayerControl } from './player-control.js';
 
 const { app, ipcMain, Notification } = electron;
 
@@ -56,36 +57,15 @@ interface MediaSessionSnapshot {
   position: number;
   duration: number;
   volume: number;
+  url: string;
 }
 
-// Best-effort DOM control: Apple's web player exposes no public control API
-// without a MusicKit developer token, so transport controls are relayed by
-// invoking the player's own on-page buttons via their accessibility labels.
-// This is inherently best-effort and may stop working if Apple changes its
-// markup; it degrades silently rather than crashing the app.
-const CONTROL_SCRIPTS: Record<string, string> = {
-  playPause: `(function(){var a=document.querySelector('audio,video');if(a){a.paused?a.play():a.pause();return;}var b=document.querySelector('[aria-label="Play"],[aria-label="Pause"]');if(b)b.click();})();`,
-  next: `(function(){var b=document.querySelector('[aria-label="Next"]');if(b)b.click();})();`,
-  previous: `(function(){var b=document.querySelector('[aria-label="Previous"]');if(b)b.click();})();`,
-};
-
-// The underlying <audio>/<video> element is a real, directly addressable
-// DOM node (unlike transport, which has no element-level API and has to go
-// through on-page buttons), so volume and seeking can be set precisely
-// rather than simulated by clicking a slider.
-function setVolumeScript(volume: number): string {
-  const clamped = Math.max(0, Math.min(1, volume));
-  return `(function(){var a=document.querySelector('audio,video');if(a)a.volume=${clamped};})();`;
-}
-function setPositionScript(seconds: number): string {
-  const clamped = Math.max(0, seconds);
-  return `(function(){var a=document.querySelector('audio,video');if(a)a.currentTime=${clamped};})();`;
-}
-function seekRelativeScript(offsetSeconds: number): string {
-  return `(function(){var a=document.querySelector('audio,video');if(a)a.currentTime=Math.max(0,a.currentTime+(${offsetSeconds}));})();`;
-}
-
-export async function setupMpris(win: BrowserWindow, isNotificationsEnabled: () => boolean = () => true): Promise<void> {
+export async function setupMpris(
+  win: BrowserWindow,
+  isNotificationsEnabled: () => boolean = () => true,
+  onTrackChange: (snapshot: MediaSessionSnapshot) => void = () => undefined,
+): Promise<void> {
+  const control = createPlayerControl(win);
   let lastSnapshot: MediaSessionSnapshot | null = null;
   let lastNotifiedTitle: string | null = null;
 
@@ -93,6 +73,7 @@ export async function setupMpris(win: BrowserWindow, isNotificationsEnabled: () 
     lastSnapshot = snapshot;
     if (snapshot.title && snapshot.title !== lastNotifiedTitle) {
       lastNotifiedTitle = snapshot.title;
+      onTrackChange(snapshot);
       if (isNotificationsEnabled() && Notification.isSupported()) {
         const show = (icon?: string): void => {
           new Notification({
@@ -208,16 +189,16 @@ export async function setupMpris(win: BrowserWindow, isNotificationsEnabled: () 
       return lastSnapshot?.volume ?? 1;
     }
     set Volume(value: number) {
-      void win.webContents.executeJavaScript(setVolumeScript(value)).catch(() => undefined);
+      control.setVolume(value);
     }
     Seek(offsetMicroseconds: bigint): void {
-      void win.webContents.executeJavaScript(seekRelativeScript(Number(offsetMicroseconds) / 1_000_000)).catch(() => undefined);
+      control.seekRelative(Number(offsetMicroseconds) / 1_000_000);
     }
     SetPosition(_trackId: string, positionMicroseconds: bigint): void {
-      void win.webContents.executeJavaScript(setPositionScript(Number(positionMicroseconds) / 1_000_000)).catch(() => undefined);
+      control.setPosition(Number(positionMicroseconds) / 1_000_000);
     }
     PlayPause(): void {
-      void win.webContents.executeJavaScript(CONTROL_SCRIPTS.playPause).catch(() => undefined);
+      control.playPause();
     }
     Play(): void {
       this.PlayPause();
@@ -226,10 +207,10 @@ export async function setupMpris(win: BrowserWindow, isNotificationsEnabled: () 
       this.PlayPause();
     }
     Next(): void {
-      void win.webContents.executeJavaScript(CONTROL_SCRIPTS.next).catch(() => undefined);
+      control.next();
     }
     Previous(): void {
-      void win.webContents.executeJavaScript(CONTROL_SCRIPTS.previous).catch(() => undefined);
+      control.previous();
     }
     Stop(): void {
       this.PlayPause();
