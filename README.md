@@ -135,6 +135,7 @@ Config, session, and history data live under `~/.config/Auralis` and can be dele
 - All permission requests from web content (camera, mic, geolocation, etc.) are denied by default
 - The preload bridge exposes only public, already-visible Media Session metadata (title, artist, album, position) — never cookies, tokens, or credentials
 - No credentials, cookies, or session tokens are ever logged
+- Imported settings/history files are validated field-by-field (`settings.ts`, `history.ts`) rather than trusted wholesale — a malformed or hand-edited import degrades to safe defaults instead of crashing the app or injecting bad data into playback control
 
 ## Development
 

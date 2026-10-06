@@ -29,11 +29,32 @@ function filePath(userDataDir: string): string {
   return path.join(userDataDir, 'settings.json');
 }
 
+const EQUALIZER_PRESETS: readonly EqualizerPreset[] = ['flat', 'bassBoost', 'trebleBoost', 'vocalBoost'];
+
+// Validates each field independently and falls back to its default rather
+// than trusting the file wholesale — this runs on both a normal load and on
+// a user-provided import, and an import in particular could easily be a
+// hand-edited or stale file with the wrong shape. An invalid equalizerPreset
+// in particular isn't just cosmetic: player-control.ts looks it up directly
+// in a fixed table with no fallback, so an unvalidated bogus value would
+// throw when the preset is next applied.
+export function sanitizeSettings(input: unknown): Settings {
+  const parsed = (input && typeof input === 'object' ? input : {}) as Partial<Settings>;
+  return {
+    notificationsEnabled: typeof parsed.notificationsEnabled === 'boolean' ? parsed.notificationsEnabled : DEFAULTS.notificationsEnabled,
+    minimizeToTray: typeof parsed.minimizeToTray === 'boolean' ? parsed.minimizeToTray : DEFAULTS.minimizeToTray,
+    hasShownTrayHint: typeof parsed.hasShownTrayHint === 'boolean' ? parsed.hasShownTrayHint : DEFAULTS.hasShownTrayHint,
+    hardwareAcceleration: typeof parsed.hardwareAcceleration === 'boolean' ? parsed.hardwareAcceleration : DEFAULTS.hardwareAcceleration,
+    equalizerPreset: EQUALIZER_PRESETS.includes(parsed.equalizerPreset as EqualizerPreset)
+      ? (parsed.equalizerPreset as EqualizerPreset)
+      : DEFAULTS.equalizerPreset,
+  };
+}
+
 export function loadSettings(userDataDir: string): Settings {
   try {
     const raw = fs.readFileSync(filePath(userDataDir), 'utf-8');
-    const parsed = JSON.parse(raw) as Partial<Settings>;
-    return { ...DEFAULTS, ...parsed };
+    return sanitizeSettings(JSON.parse(raw));
   } catch {
     // No saved settings yet, or the file is corrupt — fall back to defaults.
     return { ...DEFAULTS };

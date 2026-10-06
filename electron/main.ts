@@ -7,9 +7,9 @@ import { setupMpris } from './mpris.js';
 import { isAllowedUrl } from './url-guard.js';
 import { loadWindowState, trackWindowState } from './window-state.js';
 import { checkForUpdate } from './update-checker.js';
-import { loadSettings, saveSettings, type Settings } from './settings.js';
+import { loadSettings, saveSettings, sanitizeSettings, type Settings } from './settings.js';
 import { createPlayerControl } from './player-control.js';
-import { loadHistory, saveHistory, addEntry, type HistoryEntry } from './history.js';
+import { loadHistory, saveHistory, addEntry, sanitizeHistory, type HistoryEntry } from './history.js';
 
 const { app, BrowserWindow, Menu, Tray, nativeImage, shell, ipcMain, session, Notification, clipboard, dialog } = electron;
 
@@ -257,12 +257,12 @@ ipcMain.handle('prefs:import', async () => {
   try {
     const raw = fs.readFileSync(filePaths[0], 'utf-8');
     const parsed = JSON.parse(raw) as Partial<ExportedData>;
-    if (parsed.settings && typeof parsed.settings === 'object') {
-      Object.assign(settings, parsed.settings);
+    if (parsed.settings) {
+      Object.assign(settings, sanitizeSettings(parsed.settings));
       persistSettings();
     }
-    if (Array.isArray(parsed.history)) {
-      history = parsed.history;
+    if (parsed.history) {
+      history = sanitizeHistory(parsed.history);
       saveHistory(app.getPath('userData'), history);
     }
     rebuildTrayMenu?.();
@@ -285,7 +285,7 @@ ipcMain.on('search-palette:cancel', () => closeSearchPalette());
 ipcMain.on('search-palette:submit', (_event, query: unknown) => {
   if (typeof query === 'string' && query.trim() && mainWindow) {
     const url = `https://music.apple.com/search?term=${encodeURIComponent(query.trim())}`;
-    mainWindow.loadURL(url);
+    void mainWindow.loadURL(url);
     mainWindow.show();
     mainWindow.focus();
   }
@@ -574,7 +574,7 @@ function createTray(win: BrowserWindowType): TrayType {
             enabled: Boolean(entry.url),
             click: () => {
               if (entry.url) {
-                win.loadURL(entry.url);
+                void win.loadURL(entry.url);
                 win.show();
                 win.focus();
               }
@@ -699,9 +699,14 @@ if (gotSingleInstanceLock) {
       // "Sleep at end of track" means the *previous* track, not this new
       // one — pause now, before updating currentTrack, so the notification
       // and history entry for the track that just started don't fire for a
-      // track that's immediately paused.
-      if (sleepAtEndOfTrack && mainWindow) {
-        createPlayerControl(mainWindow).playPause();
+      // track that's immediately paused. playPause() is a toggle, so only
+      // call it when the new track is actually playing — calling it
+      // unconditionally could instead *resume* a track that hadn't started
+      // playing yet, inverting the intent.
+      if (sleepAtEndOfTrack) {
+        if (latestSnapshot?.playing && mainWindow) {
+          createPlayerControl(mainWindow).playPause();
+        }
         clearSleepTimer();
         rebuildTrayMenu?.();
       }

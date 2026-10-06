@@ -15,11 +15,34 @@ function filePath(userDataDir: string): string {
   return path.join(userDataDir, 'history.json');
 }
 
+// Used for both a normal load and a user-provided import, and validates
+// every field rather than trusting the shape — url in particular is passed
+// straight to BrowserWindow.loadURL(), which throws synchronously on a
+// non-string argument, so a malformed entry (hand-edited or stale) could
+// otherwise crash the app the moment it's clicked in "Recently Played".
+export function sanitizeHistory(input: unknown): HistoryEntry[] {
+  if (!Array.isArray(input)) return [];
+  const result: HistoryEntry[] = [];
+  for (const item of input) {
+    if (!item || typeof item !== 'object') continue;
+    const entry = item as Partial<HistoryEntry>;
+    if (typeof entry.title !== 'string') continue;
+    result.push({
+      title: entry.title,
+      artist: typeof entry.artist === 'string' ? entry.artist : null,
+      album: typeof entry.album === 'string' ? entry.album : null,
+      url: typeof entry.url === 'string' ? entry.url : null,
+      playedAt: typeof entry.playedAt === 'number' ? entry.playedAt : Date.now(),
+    });
+    if (result.length >= MAX_ENTRIES) break;
+  }
+  return result;
+}
+
 export function loadHistory(userDataDir: string): HistoryEntry[] {
   try {
     const raw = fs.readFileSync(filePath(userDataDir), 'utf-8');
-    const parsed = JSON.parse(raw) as HistoryEntry[];
-    if (Array.isArray(parsed)) return parsed;
+    return sanitizeHistory(JSON.parse(raw));
   } catch {
     // No saved history yet, or it's corrupt — start fresh.
   }
