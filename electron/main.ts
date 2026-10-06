@@ -12,6 +12,12 @@ import { loadHistory, saveHistory, addEntry, type HistoryEntry } from './history
 
 const { app, BrowserWindow, Menu, Tray, nativeImage, shell, ipcMain, session, Notification, clipboard, dialog } = electron;
 
+// Loaded synchronously, before 'ready', specifically so the hardware
+// acceleration decision below can be settings-driven. app.getPath works
+// before 'ready' (verified directly: logged identical paths pre- and
+// post-ready in this exact invocation style), so this is safe.
+const initialSettings = loadSettings(app.getPath('userData'));
+
 // Works around a real, repeatedly-observed crash on this Wayland/Mesa setup:
 // the GPU process segfaults 2-3 times on every cold start trying to allocate
 // a hardware scanout buffer ("Cannot create bo with format=RGBA_8888 and
@@ -20,10 +26,14 @@ const { app, BrowserWindow, Menu, Tray, nativeImage, shell, ipcMain, session, No
 // `disable-gpu-sandbox` alone did NOT fix this (tested: identical 3-crash
 // pattern with it set). Fully disabling GPU hardware acceleration does,
 // verified by rerunning the same launch after adding this line and seeing
-// zero gpu_process_host crash-loop lines. The app is a media player, not a
-// GPU-bound UI, so trading hardware compositing for a guaranteed-stable
-// startup is the right tradeoff here.
-app.disableHardwareAcceleration();
+// zero gpu_process_host crash-loop lines. That bug is specific to this kind
+// of driver/compositor combination though, not universal — so this is now a
+// persisted, tray-toggleable setting (default off, matching the verified-safe
+// state) rather than an unconditional call, so capable hardware isn't stuck
+// paying the software-rendering cost for a bug it may not have.
+if (!initialSettings.hardwareAcceleration) {
+  app.disableHardwareAcceleration();
+}
 
 // Without this, launching Auralis twice creates two windows both trying to
 // play audio and both trying to claim the same MPRIS bus name (only one
@@ -39,12 +49,22 @@ const isDev = !app.isPackaged;
 
 const APPLE_MUSIC_URL = 'https://music.apple.com/';
 
+const EQUALIZER_LABELS: Record<Settings['equalizerPreset'], string> = {
+  flat: 'Flat (Off)',
+  bassBoost: 'Bass Boost',
+  trebleBoost: 'Treble Boost',
+  vocalBoost: 'Vocal Boost',
+};
+
 let mainWindow: BrowserWindowType | null = null;
 let tray: TrayType | null = null;
 let searchPalette: BrowserWindowType | null = null;
+let miniPlayer: BrowserWindowType | null = null;
+let latestSnapshot: { title: string | null; artist: string | null; artwork: string | null; playing: boolean } | null =
+  null;
 let isQuitting = false;
 let offlineRetryTimer: ReturnType<typeof setInterval> | null = null;
-let settings: Settings = { notificationsEnabled: true, minimizeToTray: false, hasShownTrayHint: false };
+const settings: Settings = initialSettings;
 let history: HistoryEntry[] = [];
 let currentTrack: HistoryEntry | null = null;
 let rebuildTrayMenu: (() => void) | null = null;
@@ -92,6 +112,51 @@ function openSearchPalette(): void {
 function closeSearchPalette(): void {
   searchPalette?.close();
 }
+
+function openMiniPlayer(): void {
+  if (miniPlayer) {
+    miniPlayer.focus();
+    return;
+  }
+  const win = new BrowserWindow({
+    width: 320,
+    height: 90,
+    frame: false,
+    resizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    backgroundColor: '#15151a',
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'mini-player-preload.cjs'),
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+    },
+  });
+  void win.loadFile(path.join(__dirname, '..', 'build', 'mini-player.html'));
+  win.once('ready-to-show', () => {
+    win.show();
+    if (latestSnapshot) win.webContents.send('mini-player:update', latestSnapshot);
+  });
+  miniPlayer = win;
+  win.on('closed', () => {
+    miniPlayer = null;
+  });
+}
+
+function closeMiniPlayer(): void {
+  miniPlayer?.close();
+}
+
+ipcMain.on('mini-player:close', () => closeMiniPlayer());
+ipcMain.on('mini-player:control', (_event, action: unknown) => {
+  if (!mainWindow) return;
+  const control = createPlayerControl(mainWindow);
+  if (action === 'playPause') control.playPause();
+  else if (action === 'next') control.next();
+  else if (action === 'previous') control.previous();
+});
 
 ipcMain.on('search-palette:cancel', () => closeSearchPalette());
 ipcMain.on('search-palette:submit', (_event, query: unknown) => {
@@ -228,6 +293,11 @@ function createWindow(): BrowserWindowType {
         case '3':
           event.preventDefault();
           void win.loadURL('https://music.apple.com/library/albums');
+          return;
+        case 'm':
+        case 'M':
+          event.preventDefault();
+          openMiniPlayer();
           return;
         default:
           break;
@@ -370,6 +440,7 @@ function createTray(win: BrowserWindowType): TrayType {
     const menu = Menu.buildFromTemplate([
       { label: 'Show Auralis', click: () => win.show() },
       { label: 'Search…', accelerator: 'CmdOrCtrl+K', click: () => openSearchPalette() },
+      { label: 'Mini Player', accelerator: 'Ctrl+Alt+M', click: () => openMiniPlayer() },
       { label: 'Recently Played', submenu: recentlyPlayed },
       {
         label: 'Copy Current Track Link',
@@ -414,6 +485,33 @@ function createTray(win: BrowserWindowType): TrayType {
         click: (item) => {
           settings.notificationsEnabled = item.checked;
           persistSettings();
+        },
+      },
+      {
+        label: 'Equalizer',
+        submenu: (['flat', 'bassBoost', 'trebleBoost', 'vocalBoost'] as const).map((preset) => ({
+          label: EQUALIZER_LABELS[preset],
+          type: 'radio' as const,
+          checked: settings.equalizerPreset === preset,
+          click: () => {
+            settings.equalizerPreset = preset;
+            persistSettings();
+            createPlayerControl(win).setEqualizer(preset);
+          },
+        })),
+      },
+      {
+        label: 'Hardware Acceleration (restarts app)',
+        type: 'checkbox',
+        checked: settings.hardwareAcceleration,
+        click: (item) => {
+          settings.hardwareAcceleration = item.checked;
+          persistSettings();
+          // This is decided once, at module load, before 'ready' — so the
+          // only way to apply a change is a fresh process.
+          isQuitting = true;
+          app.relaunch();
+          app.exit(0);
         },
       },
       { type: 'separator' },
@@ -471,7 +569,6 @@ if (gotSingleInstanceLock) {
   });
 
   app.whenReady().then(() => {
-    settings = loadSettings(app.getPath('userData'));
     history = loadHistory(app.getPath('userData'));
     mainWindow = createWindow();
     tray = createTray(mainWindow);
@@ -488,6 +585,21 @@ if (gotSingleInstanceLock) {
       history = addEntry(history, entry);
       saveHistory(app.getPath('userData'), history);
       rebuildTrayMenu?.();
+      // Apple's player may swap in a new <audio> element per track; the
+      // equalizer wrapper is element-specific, so re-apply on every track
+      // change. Only acts if the user has ever actually picked a preset —
+      // otherwise this is a no-op and the audio graph is never touched.
+      if (settings.equalizerPreset !== 'flat' && mainWindow) {
+        createPlayerControl(mainWindow).setEqualizer(settings.equalizerPreset);
+      }
+    }, (snapshot) => {
+      latestSnapshot = {
+        title: snapshot.title,
+        artist: snapshot.artist,
+        artwork: snapshot.artwork,
+        playing: snapshot.playing,
+      };
+      miniPlayer?.webContents.send('mini-player:update', latestSnapshot);
     }).catch((err) => {
       // MPRIS is a nice-to-have; its absence must never crash the app.
       console.warn('[auralis] MPRIS integration unavailable:', err instanceof Error ? err.stack : err);

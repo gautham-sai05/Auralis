@@ -1,0 +1,101 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src https://is1-ssl.mzstatic.com https://is2-ssl.mzstatic.com https://is3-ssl.mzstatic.com https://is4-ssl.mzstatic.com https://is5-ssl.mzstatic.com https://is6-ssl.mzstatic.com data:;" />
+<title>Auralis Mini Player</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #15151a;
+    color: #f2f2f4;
+    font-family: -apple-system, "SF Pro Display", "Segoe UI", Roboto, Ubuntu, sans-serif;
+    overflow: hidden;
+    user-select: none;
+  }
+  .bar {
+    -webkit-app-region: drag;
+    height: 14px;
+  }
+  .wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 10px 10px;
+    height: calc(100% - 14px);
+    box-sizing: border-box;
+  }
+  .art {
+    width: 56px;
+    height: 56px;
+    border-radius: 8px;
+    background: #2a2a31 center/cover no-repeat;
+    flex-shrink: 0;
+  }
+  .meta { flex: 1; min-width: 0; }
+  .title {
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .artist {
+    font-size: 11px;
+    color: #9a9aa4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .controls {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+    -webkit-app-region: no-drag;
+  }
+  button {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: none;
+    background: #2a2a31;
+    color: #f2f2f4;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  button:hover { background: #38383f; }
+  .close {
+    position: absolute;
+    top: 2px;
+    right: 4px;
+    width: 18px;
+    height: 18px;
+    background: transparent;
+    color: #6b6b78;
+    font-size: 14px;
+    -webkit-app-region: no-drag;
+  }
+  .close:hover { color: #f2f2f4; background: transparent; }
+</style>
+</head>
+<body>
+  <div class="bar"></div>
+  <button class="close" id="closeBtn" title="Close">×</button>
+  <div class="wrap">
+    <div class="art" id="art"></div>
+    <div class="meta">
+      <div class="title" id="title">Nothing playing</div>
+      <div class="artist" id="artist"></div>
+    </div>
+    <div class="controls">
+      <button id="prevBtn" title="Previous">⏮</button>
+      <button id="playBtn" title="Play/Pause">⏯</button>
+      <button id="nextBtn" title="Next">⏭</button>
+    </div>
+  </div>
+  <script src="mini-player.js"></script>
+</body>
+</html>

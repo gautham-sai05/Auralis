@@ -10,6 +10,8 @@ files:
   - build/offline.html
   - build/search.html
   - build/search.js
+  - build/mini-player.html
+  - build/mini-player.js
   - build/icon.png
   - package.json
   - "!node_modules/**/*.map"

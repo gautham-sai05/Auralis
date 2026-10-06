@@ -64,6 +64,7 @@ export async function setupMpris(
   win: BrowserWindow,
   isNotificationsEnabled: () => boolean = () => true,
   onTrackChange: (snapshot: MediaSessionSnapshot) => void = () => undefined,
+  onUpdate: (snapshot: MediaSessionSnapshot) => void = () => undefined,
 ): Promise<void> {
   const control = createPlayerControl(win);
   let lastSnapshot: MediaSessionSnapshot | null = null;
@@ -71,6 +72,7 @@ export async function setupMpris(
 
   const onSnapshot = (_event: unknown, snapshot: MediaSessionSnapshot): void => {
     lastSnapshot = snapshot;
+    onUpdate(snapshot);
     if (snapshot.title && snapshot.title !== lastNotifiedTitle) {
       lastNotifiedTitle = snapshot.title;
       onTrackChange(snapshot);
